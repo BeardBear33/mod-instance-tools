@@ -2,6 +2,7 @@
 
 Instance Tools modul přidává NPC umožňující resetovat libovolný raid/dungeon a lze nastavit ceny v DB. Taktéž umožňuje resetovat všechny raidy/dungeony, které mají aktivní lock ID, a v případě nastavené ceny se částka sčítá dohromady. Lze nastavit limit, kolikrát lze jednotlivé dungeony/raidy resetovat, a datum + čas, kdy má dojít k resetování.
 Taktéž je možnost spawnout NPC, které umožňuje teleportovat se do VoA i v případě, že frakce nevlastní Wintergrasp. Cenu lze nastavit v configu.
+
 NPC pro Instance Reset spawnete příkazem ".npc add 987457"
 NPC pro VoA teleport spawnete příkazem ".npc add 987456"
  
