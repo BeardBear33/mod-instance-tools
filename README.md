@@ -5,10 +5,10 @@
 - NPC pro Instance Reset spawnete příkazem ".npc add 987457"  
 - NPC pro VoA teleport spawnete příkazem ".npc add 987456"  
   
-The Instance Tools module adds an NPC that allows resetting any raid/dungeon and it is possible to set the prices in the DB. It also allows resetting all raids/dungeons that have an active lock ID, and if a price is set, the amount is added together. Setting a limit for how many times individual dungeons/raids can be reset and the date+time when the reset should happen.  
-There is also an option to spawn an NPC that allows teleporting to VoA even if the faction does not own Wintergrasp. The price can be set in the config.  
-NPC for Instance Reset is spawned with the command ".npc add 987457"  
-NPC for VoA teleport is spawned with the command ".npc add 987456"  
+- The Instance Tools module adds an NPC that allows resetting any raid/dungeon and it is possible to set the prices in the DB. It also allows resetting all raids/dungeons that have an active lock ID, and if a price is set, the amount is added together. Setting a limit for how many times individual dungeons/raids can be reset and the date+time when the reset should happen.  
+- There is also an option to spawn an NPC that allows teleporting to VoA even if the faction does not own Wintergrasp. The price can be set in the config.  
+- NPC for Instance Reset is spawned with the command ".npc add 987457"  
+- NPC for VoA teleport is spawned with the command ".npc add 987456"  
   
 🌍 Výběr jazyk / Choose language:  
 - [Čeština](https://github.com/BeardBear33/mod-instance-tools/blob/main/README_CS.md)  
