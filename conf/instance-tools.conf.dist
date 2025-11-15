@@ -1,0 +1,109 @@
+# ==========================================
+# Instance Reset
+# ==========================================
+
+# Jazyk hlášek: cs | en
+# Messages language: cs | en
+InstanceTools.Locale = cs
+
+# === Instance Reset NPC ===
+# Zapnout/vypnout modul reset NPC
+# Enable/disable reset NPC module
+ResetNPC.Enable = 1
+
+# Povolí/Zakáže reset v instanci
+# Enable/Disable reset in instance
+ResetNPC.Checks.RequireNotInInstance = 1
+
+# Povolí/Zakáže reset v combatu
+# Enable/Disable reset in combat
+ResetNPC.Checks.RequireNotInCombat = 1
+
+# Povolí/Zakáže reset v partě/raidu
+# Enable/Disable reset in party/raid
+ResetNPC.RequireNoParty = 0
+
+# Reset platí i pro členy skupiny
+# Reset also applies to group members
+ResetNPC.Limits.ApplyToMember = 1
+
+# Denní limit pro dungeony
+# Daily limit for dungeons
+ResetNPC.Limits.HeroicPerDay = 2
+
+# Týdenní limit pro raidy
+# Weekly limit for raids
+ResetNPC.Limits.RaidPerWeek = 2
+
+# Denní reset (HH:MM, 24h). Pokud je teď před HH:MM → bere včerejší HH:MM.
+# Daily reset start time (HH:MM, 24h). If now < HH:MM → uses yesterday HH:MM.
+ResetNPC.Limits.Daily.ResetTime = 05:00
+
+# Týdenní reset – den v týdnu (0..6, 0=neděle) nebo slovem:
+#  Neděle, Pondělí, Úterý, Středa, Čtvrtek, Pátek, Sobota
+#   (CZ varianty: Neděle/Pondělí/Úterý/Středa/Čtvrtek/Pátek/Sobota; i bez diakritiky; zkratky NE/PO/ÚT/ST/ČT/PÁ/SO)
+# Weekly reset reset day (0..6 where 0=Sunday) or name:
+#  Sunday, Monday, Tuesday, Wednesday, Thursday, Friday, Saturday
+ResetNPC.Limits.Weekly.ResetDay  = NE
+
+# Čas pro týdenní reset (HH:MM, 24h)
+# Weekly reset time (HH:MM, 24h)
+ResetNPC.Limits.Weekly.ResetTime = 05:00
+
+# --- Názvy měn / Currency display names ---
+# TokenItem přejmenuj podle toho co používáš jako emblem_item v DB. Gold přejmenuj podle toho jak chces vypisovat zlaťáky.
+# Rename TokenItem according to what you use as emblem_item in the DB. Rename Gold according to how you want to display gold coins.
+InstanceTools.TokenItem.Singular = Mystery Token
+InstanceTools.TokenItem.Dual = Mystery Tokeny
+InstanceTools.TokenItem.Plural = Mystery Tokenů
+InstanceTools.Gold.Singular = Zlatý
+InstanceTools.Gold.Dual = Zlaté
+InstanceTools.Gold.Plural = Zlatých
+
+# GM ignoruje limity
+# GMs bypass limits
+ResetNPC.Limits.GMBypass = 0
+
+# ==========================================
+# VoA Teleporter
+# ==========================================
+
+# Povolit/zakázat VoA teleport
+# Enable/Disable VoA teleport
+VoATeleporter.Enable = 1
+
+# Minimalní level pro teleport do VoA
+# Minimal level for VoA teleport
+VoATeleporter.MinLevel = 80
+
+# Povolit/Zakázat teleport v combatu
+# Enable/Disable teleport in combat
+VoATeleporter.AllowWhileInCombat = 0
+
+# Pokud je 1, NEVYŽADUJE se, aby hráčova frakce vlastnila Wintergrasp (přístup do VoA).
+# If set to 1, DO NOT require the player's faction to control Wintergrasp (for VoA access).
+VoATeleporter.Override.IgnoreWintergraspOwnership = 1
+
+# Cena teleportu (zlato + volitelný item a jeho počet)
+# Teleport price (gold + optional item and its count)
+VoATeleporter.Price.Gold = 0
+VoATeleporter.Price.EmblemItemId = 0
+VoATeleporter.Price.EmblemCount = 0
+
+# --- Názvy měn / Currency display names ---
+# EmblemItem přejmenuj podle toho co používáš jako "VoATeleporter.Price.EmblemItemId". Gold přejmenuj podle toho jak chces vypisovat zlaťáky.
+# Rename EmblemItem according to what you use as "VoATeleporter.Price.EmblemItemId". Rename Gold according to how you want to display gold coins.
+VoATeleporter.EmblemItem.Singular = Mystery Token
+VoATeleporter.EmblemItem.Dual = Mystery Tokeny
+VoATeleporter.EmblemItem.Plural = Mystery Tokenů
+VoATeleporter.Gold.Singular = Zlatý
+VoATeleporter.Gold.Dual = Zlaté
+VoATeleporter.Gold.Plural = Zlatých
+
+# Cíl teleportu (přímo dovnitř instance)
+# Teleport target (straight inside the instance)
+VoATeleporter.Target.Inside.MapId = 624
+VoATeleporter.Target.Inside.X = -406.07938
+VoATeleporter.Target.Inside.Y = -103.20971
+VoATeleporter.Target.Inside.Z = 104.65892
+VoATeleporter.Target.Inside.O = 0
