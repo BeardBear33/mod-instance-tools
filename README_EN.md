@@ -50,6 +50,7 @@ If you already have other records in the database using these IDs, you must shif
   - emblem_count = number of items required to reset the instance
   - enabled = enables or disables resetting of the given instance
   - comment = informational only
+  - `Warning: do not change enabled for ICC and RS unless you have disabled lockout sharing in worldserver.conf.`
 
 
 ## License
