@@ -6,12 +6,11 @@
 
 namespace itools { namespace Names {
 
-// Tři tvary jednotky – singular / dual / plural
 struct Unit
 {
-    std::string sg; // 1
-    std::string du; // 2-4 (pro EN může být stejné jako plural)
-    std::string pl; // 5+
+    std::string sg;
+    std::string du;
+    std::string pl;
 };
 
 struct All
@@ -20,7 +19,6 @@ struct All
     Unit gold;
 };
 
-// Interní: defaulty podle jazyka (pokud user nic nenastaví v configu)
 inline All DefaultsByLocale()
 {
     std::string loc = sConfigMgr->GetOption<std::string>("InstanceTools.Locale", "cs");
@@ -30,7 +28,6 @@ inline All DefaultsByLocale()
 
     if (loc == "en" || loc == "english")
     {
-        // EN: dual == plural
         a.token.sg = "Mystery Token";
         a.token.du = "Mystery Tokens";
         a.token.pl = "Mystery Tokens";
@@ -41,7 +38,6 @@ inline All DefaultsByLocale()
     }
     else
     {
-        // CS defaulty
         a.token.sg = "Mystery Token";
         a.token.du = "Mystery Tokeny";
         a.token.pl = "Mystery Tokenů";
@@ -54,7 +50,6 @@ inline All DefaultsByLocale()
     return a;
 }
 
-// Načte a zcacheuje názvy z configu
 inline All const& Get()
 {
     static All cache;
@@ -76,7 +71,6 @@ inline All const& Get()
     return cache;
 }
 
-// 1 -> singular, 2-4 -> dual, jinak plural
 inline std::string CountTokenName(uint64 n)
 {
     All const& a = Get();
@@ -93,4 +87,4 @@ inline std::string CountGoldName(uint64 n)
     return a.gold.pl;
 }
 
-}} // namespace itools::Names
+}}

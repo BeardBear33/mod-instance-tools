@@ -19,12 +19,46 @@ ResetNPC.Checks.RequireNotInInstance = 1
 # Enable/Disable reset in combat
 ResetNPC.Checks.RequireNotInCombat = 1
 
-# Povolí/Zakáže reset v partě/raidu
-# Enable/Disable reset in party/raid
-ResetNPC.RequireNoParty = 0
+# Pokud je 1, leader může resetovat instance locky pro celou partu/raid
+#     (pouze členům, kteří sdílí stejné instance ID). Menu uvidí jen solo hráč
+#     nebo leader skupiny.
+#
+# Pokud je 0, reset se týká pouze hráče, který ho spustil. Menu je dostupné
+#     všem (není potřeba být leader).
+#
+# Poznámka: Při hodnotě 0 se ResetNPC.Limits.ApplyToMember ignoruje.
+#
+#
+#
+# If set to 1, the group/raid leader can reset instance locks for the whole
+#     group (only members sharing the same instance ID). The menu is visible only
+#     to solo players or the group leader.
+#
+# If set to 0, the reset affects only the player who triggered it. The menu
+#     is visible to everyone (no leader requirement).
+#
+# Note: When set to 0, ResetNPC.Limits.ApplyToMember is ignored.
+ResetNPC.Reset.Group = 1
 
-# Reset platí i pro členy skupiny
-# Reset also applies to group members
+# Pokud je 1 a zároveň ResetNPC.Reset.Group = 1, kontrolují a odečítají se
+#     limity i u členů skupiny, kterým je reset aplikován.
+#
+# Pokud je 0 a ResetNPC.Reset.Group = 1, limity členů se nekontrolují ani
+#     neodečítají (pouze leaderovi). Může sloužit jako „bypass“ pro členy.
+#
+# Pokud je ResetNPC.Reset.Group = 0, tento klíč se ignoruje (resetuje se jen
+#     spouštějící hráč a limity se řeší jen u něj).
+#
+#
+#
+# If 1 and ResetNPC.Reset.Group = 1, limits are checked and consumed for all
+#     affected group members.
+#
+# If 0 and ResetNPC.Reset.Group = 1, members’ limits are neither checked nor
+#     consumed (only the leader’s are). This can act as a member “bypass”.
+#
+# If ResetNPC.Reset.Group = 0, this key is ignored (only the triggering player
+#     is reset; only their limits apply).
 ResetNPC.Limits.ApplyToMember = 1
 
 # Denní limit pro dungeony

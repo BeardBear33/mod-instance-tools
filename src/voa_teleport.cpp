@@ -8,16 +8,16 @@
 #include "ScriptedGossip.h"
 #include "Group.h"
 #include "SharedDefines.h"
-#include "InstanceSaveMgr.h" // sInstanceSaveMgr
+#include "InstanceSaveMgr.h"
 
 #include "BattlefieldMgr.h"
 #include "BattlefieldWG.h"
 
 #include <string>
 #include <algorithm>
-#include <cstdlib>   // atof
+#include <cstdlib>
 #include <sstream>
-#include <ctime>     // time_t, time
+#include <ctime>
 
 namespace itools
 {
@@ -45,7 +45,6 @@ struct Price
     uint32 emblemCount = 0;
 };
 
-// Jednoduché názvy z configu
 struct UnitNames { std::string sg, du, pl; };
 
 static std::string CountName(uint64 n, UnitNames const& u)
@@ -61,19 +60,14 @@ struct CfgVoA
     uint32 voaMinLv              = 80;
     bool   voaAllowCombat        = false;
     bool   voaForceFreshInstance = true;
-
     Price  voaPrice;
-
     uint32 voaMap = 624;
     float  voaX   = -406.07938f;
     float  voaY   = -103.20971f;
     float  voaZ   = 104.65892f;
     float  voaO   = 0.f;
-
-    // Lze ignorovat vlastnictví, ale NE bitvu/queue
     bool   voaOverrideIgnoreWGOwnership = false;
 
-    // Jednoduché názvy pro zobrazení ceny
     UnitNames goldNames;
     UnitNames emblemNames;
 };
@@ -141,7 +135,6 @@ static bool IsWGBattleActive()
     return false;
 }
 
-// Normalizace WG timeru na sekundy (sekundy NEBO milisekundy) + krátká paměť
 static uint32 WGCountdownSeconds(BattlefieldWG* wg)
 {
     if (!wg || wg->IsWarTime())
@@ -182,7 +175,6 @@ static uint32 WGCountdownSeconds(BattlefieldWG* wg)
     return secs;
 }
 
-// „Queue/prep“ je aktivní, pokud mimo wartime a countdown ≤ 30 minut (s pamětí).
 static bool IsWGQueueActiveSmart()
 {
     BattlefieldWG* wg = GetWG();
@@ -277,7 +269,20 @@ static Difficulty const kRaidDiffs[] = {
     RAID_DIFFICULTY_25MAN_HEROIC
 };
 
-// Odbinduj hráče od všech VoA instancí (zabrání přiřazení do cizího "encounter in progress")
+static bool HasAnyVoABind(Player* pl)
+{
+    if (!pl)
+        return false;
+
+    for (Difficulty d : kRaidDiffs)
+    {
+        BoundInstancesMap const& binds = sInstanceSaveMgr->PlayerGetBoundInstances(pl->GetGUID(), d);
+        if (binds.find(VOA_MAP_ID) != binds.end())
+            return true;
+    }
+    return false;
+}
+
 static void UnbindAllVoA(Player* pl)
 {
     if (!pl) return;
@@ -298,10 +303,8 @@ enum : uint32
     ACT_ROOT_OPEN     = 1,
     ACT_CONFIRM_YES   = 2,
     ACT_BACK          = 3,
-
-    // "Ne-klikatelná" tlačítka — zůstáváme ve stejné sekci
-    ACT_NOP_ALERT     = 100, // hlášky typu "probíhá bitva", "nevlastníte WG"
-    ACT_NOP_CONFIRM   = 101  // řádky v potvrzovacím submenu (cena/info/separátor)
+    ACT_NOP_ALERT     = 100,
+    ACT_NOP_CONFIRM   = 101
 };
 
 static void ShowAlertOnly(Player* player, Creature* creature, char const* msg)
@@ -329,7 +332,6 @@ static void ShowConfirmSubmenu(Player* player, Creature* creature)
     {
         AddGossipItemFor(player, GOSSIP_ICON_MONEY_BAG, PriceLine(), GOSSIP_SENDER_MAIN, ACT_NOP_CONFIRM);
 
-        // Info: každý člen raidu platí sám za sebe (pod „Cena:“ a nad separátorem)
         AddGossipItemFor(player, GOSSIP_ICON_CHAT,
             T("Info: Vstup platí každý hráč z raidu zvlášť",
               "Info: Each raid member pays individually"),
@@ -365,7 +367,6 @@ static bool DoTeleport(Player* player)
         return false;
     }
 
-    // Raid skupina je povinná
     if (!player->GetGroup() || !player->GetGroup()->isRaidGroup())
     {
         ChatHandler(player->GetSession()).SendSysMessage(
@@ -373,7 +374,6 @@ static bool DoTeleport(Player* player)
         return false;
     }
 
-    // Bitva nebo queue (≤30 min) aktivní? — blokuj
     if (IsWGBattleActive() || IsWGQueueActiveSmart())
     {
         ChatHandler(player->GetSession()).SendSysMessage(
@@ -381,7 +381,6 @@ static bool DoTeleport(Player* player)
         return false;
     }
 
-    // Vlastnictví lze (volitelně) ignorovat
     if (!s.voaOverrideIgnoreWGOwnership && !PlayerFactionControlsWG(player))
     {
         ChatHandler(player->GetSession()).SendSysMessage(
@@ -389,7 +388,6 @@ static bool DoTeleport(Player* player)
         return false;
     }
 
-    // Platba (pouze klikající hráč)
     std::string err;
     if (!TakePayment(player, s.voaPrice, err))
     {
@@ -397,7 +395,7 @@ static bool DoTeleport(Player* player)
         return false;
     }
 
-    if (s.voaForceFreshInstance)
+    if (s.voaForceFreshInstance && !HasAnyVoABind(player))
         UnbindAllVoA(player);
 
     bool ok = player->TeleportTo(s.voaMap, s.voaX, s.voaY, s.voaZ, s.voaO);
@@ -425,7 +423,6 @@ public:
         if (!s.voaEnable)
             return false;
 
-        // Pokud probíhá bitva nebo queue (≤30 min) → jen hláška (neklikatelná)
         if (IsWGBattleActive() || IsWGQueueActiveSmart())
         {
             ShowAlertOnly(player, creature,
@@ -434,7 +431,6 @@ public:
             return true;
         }
 
-        // Pokud se neignoruje vlastnictví a frakce nevlastní WG → jen hláška (neklikatelná)
         if (!s.voaOverrideIgnoreWGOwnership && !PlayerFactionControlsWG(player))
         {
             ShowAlertOnly(player, creature,
@@ -443,7 +439,6 @@ public:
             return true;
         }
 
-        // Povinná raid parta: pokud hráč není v raid skupině, ukaž jen informaci (neklikatelnou)
         if (!player->GetGroup() || !player->GetGroup()->isRaidGroup())
         {
             ShowAlertOnly(player, creature,
@@ -452,35 +447,29 @@ public:
             return true;
         }
 
-        // Root menu (hráč je v raid skupině, není bitva/queue a splněno vlastnictví/override)
         ShowRoot(player, creature);
         return true;
     }
 
     bool OnGossipSelect(Player* player, Creature* creature, uint32 /*sender*/, uint32 action) override
     {
-        // "Ne-klikatelná" tlačítka: zůstaň v té samé sekci
         if (action == ACT_NOP_ALERT)
         {
-            // Rekonstruuj aktuální stav (zůstane v informačním zobrazení)
             return OnGossipHello(player, creature);
         }
         if (action == ACT_NOP_CONFIRM)
         {
-            // Zůstaň v potvrzovacím submenu
             ShowConfirmSubmenu(player, creature);
             return true;
         }
 
         if (action == ACT_BACK)
         {
-            // Návrat z potvrzovacího submenu zpět na root (pokud je stále povolený)
             return OnGossipHello(player, creature);
         }
 
         if (action == ACT_ROOT_OPEN)
         {
-            // Znovu ověř bitvu/queue – pokud aktivní, ukaž neklikatelnou hlášku
             if (IsWGBattleActive() || IsWGQueueActiveSmart())
             {
                 ShowAlertOnly(player, creature,
@@ -489,14 +478,12 @@ public:
                 return true;
             }
 
-            // Pokud ignorujeme vlastnictví, ukaž potvrzovací submenu (s neklikatelnými řádky)
             if (s.voaOverrideIgnoreWGOwnership)
             {
                 ShowConfirmSubmenu(player, creature);
                 return true;
             }
 
-            // Jinak rovnou pokus o teleport (bez submenu)
             if (DoTeleport(player))
                 CloseGossipMenuFor(player);
             else
@@ -513,12 +500,11 @@ public:
             return true;
         }
 
-        // Fallback: obnov root podle aktuálního stavu
         return OnGossipHello(player, creature);
     }
 };
 
-} // namespace itools
+}
 
 void RegisterVoATeleporter()
 {

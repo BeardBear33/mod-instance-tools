@@ -41,8 +41,7 @@ Pokud máš v databázi již jiné záznamy s těmito ID, je potřeba čísla v 
 - instance_reset_catalog
   - id = pouze katalogové číslo
   - map_id = ID pro instanci
-  - difficulty = určuje, zda je to 10/25, normal/heroic ---- Ještě není dokončeno, do té doby: 0 = raidy se resetují bez ohledu na obtížnost (10/25/normal/heroic jsou brány jako jeden), 1 = pouze heroic dungeony se resetují.
-  - is_raid = nastavuje, do které kategorie se má zobrazit (dungeon nebo raid).
+  - difficulty = použitelné pouze pro raidy. 0 = 10man Normal, 1 = 25man Normal, 2 = 10man Heroic, 3 = 25man Heroic, 4 = všechny varianty. Pozor: pokud nastavíte hodnotu 4, nesmíte používat hodnoty 0, 1, 2, 3, a naopak.
   - price_gold = cena ve zlatě pro reset instance.
   - emblem_item = libovolný item potřebný pro reset instance.
   - emblem_count = počet itemů potřebných pro reset instance.

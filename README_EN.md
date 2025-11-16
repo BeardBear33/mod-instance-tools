@@ -44,8 +44,7 @@ If you already have other records in the database using these IDs, you must shif
 - instance_reset_catalog
   - id = catalog number only
   - map_id = ID of the instance
-  - difficulty = determines whether it is 10/25, normal/heroic ---- Not finished yet, until then: 0 raids are reset regardless of 10/25/normal/heroic difficulty and are treated as one, 1 only heroic dungeons are reset
-  - is_raid = sets the category where it should appear, dungeon or raid
+  - difficulty = usable only for raids. 0 = 10-man Normal, 1 = 25-man Normal, 2 = 10-man Heroic, 3 = 25-man Heroic, 4 = all variants. Note: if you set the value to 4, you must not use 0, 1, 2, 3, and vice versa.
   - price_gold = gold price for resetting the instance
   - emblem_item = any item required to reset the instance
   - emblem_count = number of items required to reset the instance

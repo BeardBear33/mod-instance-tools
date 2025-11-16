@@ -47,6 +47,27 @@ static inline char const* T(char const* cs, char const* en)
 }
 static inline char const* Sep() { return "|cff808080---------------------------|r"; }
 
+// --- Guard: jen solo nebo leader může resetovat ---
+static inline bool IsSoloOrLeader(Player* p)
+{
+    if (Group* g = p->GetGroup())
+        return g->IsLeader(p->GetGUID());
+    return true;
+}
+
+static void ShowOnlyLeaderInfo(Player* player, Creature* creature)
+{
+    ClearGossipMenuFor(player);
+    AddGossipItemFor(player, GOSSIP_ICON_CHAT,
+        T("Resetovat můžeš pouze mimo partu/raid, nebo pokud jsi leader groupy.",
+          "You can reset only when not in a group/raid, or if you're the group leader."),
+        GOSSIP_SENDER_MAIN, 0u);
+    SendGossipMenuFor(player, 1, creature->GetGUID());
+}
+
+static bool CanSeeMenu(Player* p);
+
+
 // ---------------- Konfigurace ----------------
 struct Price
 {
@@ -57,31 +78,33 @@ struct Price
     bool   disabled    = false;
 };
 
-
 struct Cfg
 {
-    // Reset NPC
     bool   resetEnable        = true;
     bool   checkNotInInstance = true;
     bool   checkNotInCombat   = true;
-    bool   requireNoParty     = false;
-
-    // Limity resetů – max per dungeon/raid (per mapId), 0 = bez limitu
-    uint32 heroicPerDay       = 0; // dungeony, okno od DailyBoundary()
-    uint32 raidPerWeek        = 0; // raidy, okno od WeeklyBoundary()
+    bool   resetGroup         = true;
+    uint32 heroicPerDay       = 0;
+    uint32 raidPerWeek        = 0;
     bool   gmBypassLimits     = true;
-    bool   limitsApplyToMember = true; // ResetNPC.Limits.ApplyToMember
-
-    // ---- hranice období (konfigurovatelné) ----
+    bool   limitsApplyToMember = true;
     uint8  dailyHour   = 5;
     uint8  dailyMin    = 15;
-    // 0=Sunday ... 6=Saturday (AzerothCore tm_wday standard)
-    uint8  weeklyWday  = 0;   // default Sunday
+    uint8  weeklyWday  = 0;
     uint8  weeklyHour  = 5;
     uint8  weeklyMin   = 15;
 };
 
+
 static Cfg s;
+
+static bool CanSeeMenu(Player* p)
+{
+    if (!s.resetGroup)
+        return true;
+
+    return IsSoloOrLeader(p);
+}
 
 // ---------------- Config helpers ----------------
 static uint32 CUInt(char const* k, uint32 d) { return sConfigMgr->GetOption<uint32>(k, d); }
@@ -90,11 +113,10 @@ static std::string CStr(char const* k, char const* d) { return sConfigMgr->GetOp
 
 static void LoadCfg()
 {
-    // Reset NPC
     s.resetEnable        = CBool("ResetNPC.Enable", true);
     s.checkNotInInstance = CBool("ResetNPC.Checks.RequireNotInInstance", true);
     s.checkNotInCombat   = CBool("ResetNPC.Checks.RequireNotInCombat", true);
-    s.requireNoParty     = CBool("ResetNPC.RequireNoParty", false);
+    s.resetGroup         = CBool("ResetNPC.Reset.Group", true);
 
     s.heroicPerDay       = CUInt("ResetNPC.Limits.HeroicPerDay", 0);
     s.raidPerWeek        = CUInt("ResetNPC.Limits.RaidPerWeek", 0);
@@ -152,14 +174,12 @@ static void LoadCfg()
         return def;
     };
 
-    // Daily
     {
         auto hhmm = parseHHMM(CStr("ResetNPC.Limits.Daily.ResetTime", "05:15"), 5, 15);
         s.dailyHour = hhmm.first;
         s.dailyMin  = hhmm.second;
     }
 
-    // Weekly
     {
         s.weeklyWday = parseWday(CStr("ResetNPC.Limits.Weekly.ResetDay", "Sunday"), 0);
         auto hhmm = parseHHMM(CStr("ResetNPC.Limits.Weekly.ResetTime", "05:15"), 5, 15);
@@ -183,8 +203,6 @@ static bool IsRaid(uint32 mapId)
     return false;
 }
 
-// Vrátí epoch sekundu hranice "dnes HH:MM" podle s.dailyHour/s.dailyMin.
-// Pokud je teď před hranicí, vrací včerejší HH:MM.
 static time_t DailyBoundary()
 {
     time_t now = std::time(nullptr);
@@ -209,7 +227,6 @@ static time_t DailyBoundary()
     return today;
 }
 
-// Vrátí epoch sekundu hranice "poslední <weeklyWday> v HH:MM".
 static time_t WeeklyBoundary()
 {
     time_t now = std::time(nullptr);
@@ -245,7 +262,6 @@ static time_t WeeklyBoundary()
     return std::mktime(&border);
 }
 
-// helper: jestli na instanci ještě někdo visí
 static bool InstanceHasAnyBind(uint32 instanceId)
 {
     std::ostringstream q;
@@ -253,7 +269,6 @@ static bool InstanceHasAnyBind(uint32 instanceId)
     return CharacterDatabase.Query(q.str().c_str()) != nullptr;
 }
 
-// "Cena: 50 Zlatých a 3 Mystery Tokeny" / "Cost: 50 gold and 3 Mystery Tokens"
 static std::string PriceLine(Price const& p)
 {
     std::ostringstream o;
@@ -280,14 +295,126 @@ static std::string PriceLine(Price const& p)
     return o.str();
 }
 
+// ===== Sdílené N/H helper pro ICC (631) a RS (724) =====
+static inline bool IsIccOrRs(uint32 mapId)
+{
+    return mapId == 631 /*ICC*/ || mapId == 724 /*RS*/;
+}
+
+static int ReadSharedNHConf()
+{
+    return sConfigMgr->GetOption<int>("Instance.SharedNormalHeroicId", -1);
+}
+
+static bool PlayerShowsSharedNH(Player* pl, uint32 mapId)
+{
+    {
+        BoundInstancesMap const& n10 = sInstanceSaveMgr->PlayerGetBoundInstances(pl->GetGUID(), RAID_DIFFICULTY_10MAN_NORMAL);
+        BoundInstancesMap const& h10 = sInstanceSaveMgr->PlayerGetBoundInstances(pl->GetGUID(), RAID_DIFFICULTY_10MAN_HEROIC);
+        auto itN = n10.find(mapId), itH = h10.find(mapId);
+        if (itN != n10.end() && itH != h10.end() && itN->second.save && itH->second.save)
+            if (itN->second.save->GetInstanceId() == itH->second.save->GetInstanceId())
+                return true;
+    }
+
+    {
+        BoundInstancesMap const& n25 = sInstanceSaveMgr->PlayerGetBoundInstances(pl->GetGUID(), RAID_DIFFICULTY_25MAN_NORMAL);
+        BoundInstancesMap const& h25 = sInstanceSaveMgr->PlayerGetBoundInstances(pl->GetGUID(), RAID_DIFFICULTY_25MAN_HEROIC);
+        auto itN = n25.find(mapId), itH = h25.find(mapId);
+        if (itN != n25.end() && itH != h25.end() && itN->second.save && itH->second.save)
+            if (itN->second.save->GetInstanceId() == itH->second.save->GetInstanceId())
+                return true;
+    }
+    return false;
+}
+
+static bool IsNHSharedFor(Player* pl, uint32 mapId)
+{
+    if (!IsIccOrRs(mapId))
+        return false;
+
+    int c = ReadSharedNHConf();
+    if (c == 1) return true;
+    if (c == 0) return false;
+
+    return PlayerShowsSharedNH(pl, mapId);
+}
+
+// ===================== Helpers: catalog/limit keys & labels =====================
+static inline Difficulty DifficultyFromRaidKey(uint8 key)
+{
+    switch (key)
+    {
+        case 0: return RAID_DIFFICULTY_10MAN_NORMAL;
+		case 1: return RAID_DIFFICULTY_25MAN_NORMAL;
+        case 2: return RAID_DIFFICULTY_10MAN_HEROIC;
+        case 3: return RAID_DIFFICULTY_25MAN_HEROIC;
+        default: return RAID_DIFFICULTY_10MAN_NORMAL;
+    }
+}
+
+static uint8 GetLimitDifficultyKey(uint32 mapId, Difficulty diff, bool isRaid, bool sharedNH)
+{
+    if (!isRaid)
+        return (diff == DUNGEON_DIFFICULTY_HEROIC) ? 1 : 0;
+
+    if (sharedNH && IsIccOrRs(mapId))
+    {
+        switch (diff)
+        {
+            case RAID_DIFFICULTY_10MAN_NORMAL:
+            case RAID_DIFFICULTY_10MAN_HEROIC: return 0; // 10M shared
+            case RAID_DIFFICULTY_25MAN_NORMAL:
+            case RAID_DIFFICULTY_25MAN_HEROIC: return 1; // 25M shared
+            default: return 0;
+        }
+    }
+
+    switch (diff)
+    {
+        case RAID_DIFFICULTY_10MAN_NORMAL:  return 0;
+        case RAID_DIFFICULTY_25MAN_NORMAL:  return 1;
+        case RAID_DIFFICULTY_10MAN_HEROIC:  return 2;
+        case RAID_DIFFICULTY_25MAN_HEROIC:  return 3;
+        default: return 0;
+    }
+}
+
+static inline const char* RaidKeyLabel(uint8 key, bool sharedNH)
+{
+    if (sharedNH)
+    {
+        switch (key)
+        {
+            case 0: return " (10M)";
+            case 1: return " (25M)";
+            case 4: return ""; // all
+            default: return "";
+        }
+    }
+    else
+    {
+        switch (key)
+        {
+            case 0: return " (10M-Normal)";
+            case 1: return " (25M-Normal)";
+            case 2: return " (10M-Heroic)";
+            case 3: return " (25M-Heroic)";
+            case 4: return "";
+            default: return "";
+        }
+    }
+}
+
+
 // ---------------- Limity přes customs.instance_reset_limit ----------------
 enum class LimitKind : uint8
 {
-    DungeonDay = 0, // denní okno (DailyBoundary)
-    RaidWeek   = 1  // týdenní okno (WeeklyBoundary)
+    DungeonDay = 0,
+    RaidWeek   = 1
 };
 
-static bool CheckAndConsumeLimit(Player* player, bool isRaid, uint32 mapId, bool consume, bool sendError)
+static bool CheckAndConsumeLimit(Player* player, bool isRaid, uint32 mapId, uint8 diffKey, bool consume, bool sendError)
 {
     uint32 maxCount = isRaid ? s.raidPerWeek : s.heroicPerDay;
     if (maxCount == 0)
@@ -307,7 +434,8 @@ static bool CheckAndConsumeLimit(Player* player, bool isRaid, uint32 mapId, bool
         q << "SELECT window_start, used FROM customs.instance_reset_limit "
           << "WHERE guid=" << guidLow
           << " AND kind=" << uint32(lk)
-          << " AND map_id=" << mapId;
+          << " AND map_id=" << mapId
+          << " AND difficulty=" << uint32(diffKey);
         if (QueryResult res = CharacterDatabase.Query(q.str().c_str()))
         {
             Field* f = res->Fetch();
@@ -327,8 +455,8 @@ static bool CheckAndConsumeLimit(Player* player, bool isRaid, uint32 mapId, bool
         if (sendError)
         {
             if (isRaid)
-                ChatHandler(player->GetSession()).SendSysMessage(T("[Reset] Týdenní limit resetů pro tento raid je vyčerpán.",
-                                                                   "[Reset] Weekly reset limit for this raid has been reached."));
+                ChatHandler(player->GetSession()).SendSysMessage(T("[Reset] Týdenní limit resetů pro tento raid/difficultu je vyčerpán.",
+                                                                   "[Reset] Weekly reset limit for this raid/difficulty has been reached."));
             else
                 ChatHandler(player->GetSession()).SendSysMessage(T("[Reset] Denní limit resetů pro tento dungeon je vyčerpán.",
                                                                    "[Reset] Daily reset limit for this dungeon has been reached."));
@@ -342,10 +470,11 @@ static bool CheckAndConsumeLimit(Player* player, bool isRaid, uint32 mapId, bool
     ++used;
 
     std::ostringstream up;
-    up << "REPLACE INTO customs.instance_reset_limit (guid,kind,map_id,window_start,used) VALUES ("
+    up << "REPLACE INTO customs.instance_reset_limit (guid,kind,map_id,difficulty,window_start,used) VALUES ("
        << guidLow << ","
        << uint32(lk) << ","
        << mapId << ","
+       << uint32(diffKey) << ","
        << windowStart << ","
        << used << ")";
     CharacterDatabase.DirectExecute(up.str().c_str());
@@ -358,57 +487,79 @@ static Price PriceForInstance(uint32 mapId, Difficulty diff, bool isRaid)
 {
     Price p;
 
-    std::ostringstream q;
-    q << "SELECT enabled, price_gold, emblem_item, emblem_count "
-      << "FROM customs.instance_reset_catalog "
-      << "WHERE map_id=" << mapId;
+    auto LoadSingleRow = [&](std::ostringstream& q) -> bool
+    {
+        if (QueryResult res = WorldDatabase.Query(q.str().c_str()))
+        {
+            Field* f      = res->Fetch();
+            uint8 enabled = f[0].Get<uint8>();
+
+            p.configured  = true;
+            p.disabled    = (enabled == 0);
+
+            if (!p.disabled)
+            {
+                p.goldG       = f[1].Get<uint32>();
+                p.emblemId    = f[2].Get<uint32>();
+                p.emblemCount = f[3].Get<uint32>();
+            }
+            return true;
+        }
+        return false;
+    };
 
     if (isRaid)
     {
-        // Raidy: jedna cena pro celý raid (10/25/N/H sloučíme) -> convention: difficulty=0
-        q << " AND difficulty=0";
-    }
-    else
-    {
-        // Dungeony: 5man heroic, difficulty=1 (odpovídá diff v bindech)
-        q << " AND difficulty=" << uint32(diff);
-    }
-
-    // POZOR: už NEfiltrováme enabled=1, potřebujeme rozeznat enabled=0 vs žádný řádek
-    if (QueryResult res = WorldDatabase.Query(q.str().c_str()))
-    {
-        Field* f      = res->Fetch();
-        uint8 enabled = f[0].Get<uint8>();
-
-        p.configured  = true;
-        p.disabled    = (enabled == 0);
-
-        if (!p.disabled)
+        uint32 catDiff = 0;
+        switch (diff)
         {
-            p.goldG       = f[1].Get<uint32>();
-            p.emblemId    = f[2].Get<uint32>();
-            p.emblemCount = f[3].Get<uint32>();
+            case RAID_DIFFICULTY_10MAN_NORMAL:  catDiff = 0; break;
+            case RAID_DIFFICULTY_25MAN_NORMAL:  catDiff = 1; break;
+            case RAID_DIFFICULTY_10MAN_HEROIC:  catDiff = 2; break;
+            case RAID_DIFFICULTY_25MAN_HEROIC:  catDiff = 3; break;
+            default:                            catDiff = 0; break;
         }
-        // pokud disabled==true, necháme cenu 0/0/0 — ale řádek v menu vůbec nevložíme (viz krok 3)
+
+        std::ostringstream q;
+        q << "SELECT enabled, price_gold, emblem_item, emblem_count "
+          << "FROM customs.instance_reset_catalog "
+          << "WHERE map_id=" << mapId
+          << " AND difficulty=" << catDiff;
+
+        if (!LoadSingleRow(q))
+        {
+            p.configured = false;
+            p.disabled   = true;
+        }
+        return p;
     }
     else
     {
-        // žádný řádek v katalogu: necháváme default → položka zůstane VIDITELNÁ a ZDARMA (stávající chování)
-        p.configured = false;
-        p.disabled   = false;
-    }
+        std::ostringstream q;
+        q << "SELECT enabled, price_gold, emblem_item, emblem_count "
+          << "FROM customs.instance_reset_catalog "
+          << "WHERE map_id=" << mapId
+          << " AND difficulty=" << uint32(diff);
 
-    return p;
+        if (!LoadSingleRow(q))
+        {
+            p.configured = false;
+            p.disabled   = true;
+        }
+        return p;
+    }
 }
+
 
 // ---------------- Stav menu a logika resetu ----------------
 enum class LockKind : uint8 { Dungeon = 0, Raid = 1 };
 
 struct LockRow
 {
-    uint32      instanceId = 0; // u raidů už pro menu nehraje roli, pracujeme mapově
+    uint32      instanceId = 0;
     uint32      mapId      = 0;
-    Difficulty  diff       = DUNGEON_DIFFICULTY_NORMAL; // u raidů jen "první" diff, reálný reset pojede přes všechny
+    Difficulty  diff       = DUNGEON_DIFFICULTY_NORMAL;
+    uint8       diffKey    = 0;
     LockKind    kind       = LockKind::Dungeon;
     Price       price;
     std::string name;
@@ -442,8 +593,22 @@ static MenuState BuildMenuStateFor(Player* pl)
 {
     MenuState ms;
 
+    std::unordered_set<uint32> raidMapsPresent;
+
     std::unordered_set<uint32> seenDungeonMaps;
-    std::unordered_set<uint32> seenRaidMaps;
+
+    struct PairKey { uint32 mapId; uint8 key; };
+    struct PairHash {
+        size_t operator()(PairKey const& p) const noexcept {
+            return (size_t(p.mapId) << 8) ^ size_t(p.key);
+        }
+    };
+    struct PairEq {
+        bool operator()(PairKey const& a, PairKey const& b) const noexcept {
+            return a.mapId == b.mapId && a.key == b.key;
+        }
+    };
+    std::unordered_set<PairKey, PairHash, PairEq> seenRaidPairs;
 
     auto collect = [&](Difficulty d)
     {
@@ -452,9 +617,9 @@ static MenuState BuildMenuStateFor(Player* pl)
         {
             uint32 mapId = kv.first;
             InstanceSave const* save = kv.second.save;
-			bool perm = kv.second.perm;           // <-- NOVÉ
-			if (!save || !perm)                   // <-- upraveno (ignorujeme temporary)
-				continue;
+            bool perm = kv.second.perm;
+            if (!save || !perm)
+                continue;
 
             if (mapId == pl->GetMapId())
                 continue;
@@ -469,46 +634,129 @@ static MenuState BuildMenuStateFor(Player* pl)
                 if (seenDungeonMaps.find(mapId) != seenDungeonMaps.end())
                     continue;
                 seenDungeonMaps.insert(mapId);
-            }
-            else if (raid)
-            {
-                if (seenRaidMaps.find(mapId) != seenRaidMaps.end())
+
+                LockRow row;
+                row.instanceId = save->GetInstanceId();
+                row.mapId      = mapId;
+                row.diff       = DUNGEON_DIFFICULTY_HEROIC;
+                row.diffKey    = GetLimitDifficultyKey(mapId, row.diff, /*isRaid=*/false, /*sharedNH=*/false); // 1 (heroic)
+                row.kind       = LockKind::Dungeon;
+                row.price      = PriceForInstance(mapId, row.diff, false);
+                if (row.price.disabled)
                     continue;
-                seenRaidMaps.insert(mapId);
-            }
-
-            LockRow row;
-            row.instanceId = save->GetInstanceId();
-            row.mapId      = mapId;
-            row.diff       = d;
-            row.kind       = raid ? LockKind::Raid : LockKind::Dungeon;
-            row.price      = PriceForInstance(mapId, d, raid);
-			
-			if (row.price.disabled)
-				continue;
-			
-            row.name       = GetMapName(mapId);
-
-            if (row.kind == LockKind::Dungeon)
+                row.name       = GetMapName(mapId);
                 ms.dungeons.push_back(row);
+            }
             else
-                ms.raids.push_back(row);
+			{
+				bool shared = IsNHSharedFor(pl, mapId);
+			
+				uint8 key = GetLimitDifficultyKey(mapId, d, /*isRaid=*/true, /*sharedNH=*/shared);
+			
+				PairKey pk{ mapId, key };
+				if (seenRaidPairs.find(pk) != seenRaidPairs.end())
+					continue;
+				seenRaidPairs.insert(pk);
+			
+				raidMapsPresent.insert(mapId);
+			
+				LockRow row;
+				row.instanceId = save->GetInstanceId();
+				row.mapId      = mapId;
+			
+				if (shared && IsIccOrRs(mapId))
+				{
+					Difficulty rep = (key == 0) ? RAID_DIFFICULTY_10MAN_HEROIC : RAID_DIFFICULTY_25MAN_HEROIC;
+					Price pHero = PriceForInstance(mapId, rep, true);
+					if (pHero.configured && !pHero.disabled)
+					{
+						row.diff  = rep;
+						row.price = pHero;
+					}
+					else
+					{
+						rep = (key == 0) ? RAID_DIFFICULTY_10MAN_NORMAL : RAID_DIFFICULTY_25MAN_NORMAL;
+						row.diff  = rep;
+						row.price = PriceForInstance(mapId, rep, true);
+					}
+			
+					if (row.price.disabled)
+						continue;
+			
+					row.diffKey = key;
+					row.name    = GetMapName(mapId) + std::string(RaidKeyLabel(key, /*sharedNH=*/true));
+				}
+				else
+				{
+					row.diff    = DifficultyFromRaidKey(key);
+					row.diffKey = key;
+					row.price   = PriceForInstance(mapId, row.diff, true);
+					if (row.price.disabled)
+						continue;
+					row.name    = GetMapName(mapId) + std::string(RaidKeyLabel(key, /*sharedNH=*/false));
+				}
+			
+				row.kind = LockKind::Raid;
+				ms.raids.push_back(row);
+			}
         }
     };
 
-    // Dungeony: jen heroic
     collect(DUNGEON_DIFFICULTY_HEROIC);
 
-    // Raidy: všechny diffs (10/25/N/H), ale v menu se každá mapa objeví jen jednou
     collect(RAID_DIFFICULTY_10MAN_NORMAL);
     collect(RAID_DIFFICULTY_25MAN_NORMAL);
     collect(RAID_DIFFICULTY_10MAN_HEROIC);
     collect(RAID_DIFFICULTY_25MAN_HEROIC);
 
+    for (uint32 mapId : raidMapsPresent)
+    {
+        std::ostringstream q;
+        q << "SELECT enabled, price_gold, emblem_item, emblem_count "
+          << "FROM customs.instance_reset_catalog "
+          << "WHERE map_id=" << mapId << " AND difficulty=4";
+
+        Price pAll;
+        bool hasRow = false;
+        if (QueryResult res = WorldDatabase.Query(q.str().c_str()))
+        {
+            Field* f = res->Fetch();
+            uint8 enabled = f[0].Get<uint8>();
+            pAll.configured  = true;
+            pAll.disabled    = (enabled == 0);
+            if (!pAll.disabled)
+            {
+                pAll.goldG       = f[1].Get<uint32>();
+                pAll.emblemId    = f[2].Get<uint32>();
+                pAll.emblemCount = f[3].Get<uint32>();
+            }
+            hasRow = true;
+        }
+
+        if (hasRow && !pAll.disabled)
+        {
+            PairKey pk{ mapId, 4 };
+            if (seenRaidPairs.find(pk) == seenRaidPairs.end())
+            {
+                seenRaidPairs.insert(pk);
+
+                LockRow row;
+                row.instanceId = 0;
+                row.mapId      = mapId;
+                row.diff       = RAID_DIFFICULTY_10MAN_NORMAL;
+                row.diffKey    = 4;
+                row.kind       = LockKind::Raid;
+                row.price      = pAll;
+                row.name       = GetMapName(mapId);
+
+                ms.raids.push_back(row);
+            }
+        }
+    }
+
     return ms;
 }
 
-// součet cen pro „resetovat vše“ (pokud mají různé emblemId, emblemy se vypnou)
 static Price SumPrices(std::vector<LockRow> const& v)
 {
     Price out;
@@ -553,7 +801,6 @@ static Price SumPrices(std::vector<LockRow> const& v)
     return out;
 }
 
-// provede reset pro daný list locků
 static bool DoResetForList(Player* player, std::vector<LockRow> const& list, Price const& price, LockKind kind)
 {
     if (list.empty())
@@ -573,12 +820,20 @@ static bool DoResetForList(Player* player, std::vector<LockRow> const& list, Pri
         ChatHandler(player->GetSession()).SendSysMessage(T("[Reset] Nelze provést uvnitř instance.", "[Reset] Cannot be performed inside an instance."));
         return false;
     }
-
-    if (s.requireNoParty && player->GetGroup())
-    {
-        ChatHandler(player->GetSession()).SendSysMessage(T("[Reset] Nelze provést ve skupině.", "[Reset] Cannot be performed while in a group."));
-        return false;
-    }
+	
+	if (s.resetGroup)
+	{
+		if (Group* g = player->GetGroup())
+		{
+			if (!g->IsLeader(player->GetGUID()))
+			{
+				ChatHandler(player->GetSession()).SendSysMessage(
+					T("[Reset] Resetovat můžeš pouze mimo partu/raid, nebo pokud jsi leader groupy.",
+					"[Reset] You can reset only when not in a group/raid, or if you're the group leader."));
+				return false;
+			}
+		}
+	}
 
     bool isRaid = (kind == LockKind::Raid);
 
@@ -599,17 +854,18 @@ static bool DoResetForList(Player* player, std::vector<LockRow> const& list, Pri
 
     for (auto const& r : list)
     {
-        if (!CheckAndConsumeLimit(player, isRaid, r.mapId, false, false))
+        if (!CheckAndConsumeLimit(player, isRaid, r.mapId, r.diffKey, false, false))
             continue;
 
-        if (!CheckAndConsumeLimit(player, isRaid, r.mapId, true, false))
+        if (!CheckAndConsumeLimit(player, isRaid, r.mapId, r.diffKey, true, false))
             continue;
 
         std::vector<Player*> mapTargets;
         mapTargets.push_back(player);
 
-        Group* group = player->GetGroup();
-        bool canAffectGroup = group && group->IsLeader(player->GetGUID()) && !s.requireNoParty;
+		Group* group = player->GetGroup();
+		
+		bool canAffectGroup = s.resetGroup && group && group->IsLeader(player->GetGUID());
 
         if (canAffectGroup)
         {
@@ -620,31 +876,59 @@ static bool DoResetForList(Player* player, std::vector<LockRow> const& list, Pri
                     continue;
 
                 bool shares = false;
-				if (kind == LockKind::Dungeon)
-				{
-					for (Difficulty d : dungeonDiffs)
-					{
-						BoundInstancesMap const& binds = sInstanceSaveMgr->PlayerGetBoundInstances(member->GetGUID(), d);
-						auto it = binds.find(r.mapId);
-						if (it != binds.end() && it->second.save && it->second.perm) // <-- vyžaduj permanentní bind
-						{
-							shares = true;
-							break;
-						}
-					}
-				}
+                if (kind == LockKind::Dungeon)
+                {
+                    for (Difficulty d : dungeonDiffs)
+                    {
+                        BoundInstancesMap const& binds = sInstanceSaveMgr->PlayerGetBoundInstances(member->GetGUID(), d);
+                        auto it = binds.find(r.mapId);
+                        if (it != binds.end() && it->second.save && it->second.perm)
+                        {
+                            shares = true;
+                            break;
+                        }
+                    }
+                }
 				
-                else
+				else // LockKind::Raid
 				{
-					for (Difficulty d : raidDiffs)
+					auto sharesInMode = [&](Difficulty d) -> bool
 					{
-						BoundInstancesMap const& binds = sInstanceSaveMgr->PlayerGetBoundInstances(member->GetGUID(), d);
-						auto it = binds.find(r.mapId);
-						if (it != binds.end() && it->second.save && it->second.perm) // <-- vyžaduj permanentní bind
-						{
-							shares = true;
-							break;
-						}
+						BoundInstancesMap const& leaderBinds = sInstanceSaveMgr->PlayerGetBoundInstances(player->GetGUID(), d);
+						auto itLeader = leaderBinds.find(r.mapId);
+						if (itLeader == leaderBinds.end() || !itLeader->second.save || !itLeader->second.perm)
+							return false;
+				
+						uint32 instanceId = itLeader->second.save->GetInstanceId();
+				
+						BoundInstancesMap const& memberBinds = sInstanceSaveMgr->PlayerGetBoundInstances(member->GetGUID(), d);
+						auto itMem = memberBinds.find(r.mapId);
+						return itMem != memberBinds.end() && itMem->second.save && itMem->second.perm
+							&& itMem->second.save->GetInstanceId() == instanceId;
+					};
+				
+					bool sharedNH = IsIccOrRs(r.mapId) && IsNHSharedFor(player, r.mapId);
+				
+					if (r.diffKey == 4)
+					{
+						shares = sharesInMode(RAID_DIFFICULTY_10MAN_NORMAL)
+							|| sharesInMode(RAID_DIFFICULTY_10MAN_HEROIC)
+							|| sharesInMode(RAID_DIFFICULTY_25MAN_NORMAL)
+							|| sharesInMode(RAID_DIFFICULTY_25MAN_HEROIC);
+					}
+					else if (sharedNH && r.diffKey == 0)
+					{
+						shares = sharesInMode(RAID_DIFFICULTY_10MAN_NORMAL)
+							|| sharesInMode(RAID_DIFFICULTY_10MAN_HEROIC);
+					}
+					else if (sharedNH && r.diffKey == 1)
+					{
+						shares = sharesInMode(RAID_DIFFICULTY_25MAN_NORMAL)
+							|| sharesInMode(RAID_DIFFICULTY_25MAN_HEROIC);
+					}
+					else
+					{
+						shares = sharesInMode(DifficultyFromRaidKey(r.diffKey));
 					}
 				}
 
@@ -653,10 +937,10 @@ static bool DoResetForList(Player* player, std::vector<LockRow> const& list, Pri
 
                 if (s.limitsApplyToMember)
                 {
-                    if (!CheckAndConsumeLimit(member, isRaid, r.mapId, false, false))
+                    if (!CheckAndConsumeLimit(member, isRaid, r.mapId, r.diffKey, false, false))
                         continue;
 
-                    if (!CheckAndConsumeLimit(member, isRaid, r.mapId, true, false))
+                    if (!CheckAndConsumeLimit(member, isRaid, r.mapId, r.diffKey, true, false))
                         continue;
                 }
 
@@ -723,62 +1007,84 @@ static bool DoResetForList(Player* player, std::vector<LockRow> const& list, Pri
                 ++totalResets;
             }
         }
-        else // LockKind::Raid
-        {
-            for (Difficulty d : raidDiffs)
-            {
-                BoundInstancesMap const& leaderBinds = sInstanceSaveMgr->PlayerGetBoundInstances(player->GetGUID(), d);
-                auto itLeader = leaderBinds.find(r.mapId);
-                if (itLeader == leaderBinds.end() || !itLeader->second.save || !itLeader->second.perm)
-                    continue;
+		
+		else // LockKind::Raid
+		{
+			auto resetOneMode = [&](Difficulty d) -> bool
+			{
+				BoundInstancesMap const& leaderBinds = sInstanceSaveMgr->PlayerGetBoundInstances(player->GetGUID(), d);
+				auto itLeader = leaderBinds.find(r.mapId);
+				if (itLeader == leaderBinds.end() || !itLeader->second.save || !itLeader->second.perm)
+					return false;
+		
+				uint32 instanceId = itLeader->second.save->GetInstanceId();
+		
+				for (Player* target : mapTargets)
+				{
+					BoundInstancesMap const& binds = sInstanceSaveMgr->PlayerGetBoundInstances(target->GetGUID(), d);
+					auto it = binds.find(r.mapId);
+					if (it == binds.end() || !it->second.save)
+						continue;
+					if (it->second.save->GetInstanceId() != instanceId)
+						continue;
+		
+					sInstanceSaveMgr->PlayerUnbindInstance(target->GetGUID(), r.mapId, d, true, target);
+				}
+		
+				bool someoneStillBound = InstanceHasAnyBind(instanceId);
+		
+				if (!someoneStillBound)
+				{
+					{
+						std::ostringstream qq; qq << "DELETE FROM instance WHERE id=" << instanceId;
+						CharacterDatabase.Execute(qq.str().c_str());
+					}
+					{
+						std::ostringstream qq; qq << "DELETE FROM creature_respawn WHERE instanceId=" << instanceId;
+						CharacterDatabase.Execute(qq.str().c_str());
+					}
+					{
+						std::ostringstream qq; qq << "DELETE FROM gameobject_respawn WHERE instanceId=" << instanceId;
+						CharacterDatabase.Execute(qq.str().c_str());
+					}
+					{
+						std::ostringstream qq; qq << "DELETE FROM instance_saved_go_state_data WHERE id=" << instanceId;
+						CharacterDatabase.Execute(qq.str().c_str());
+					}
+		
+					if (Map* live = sMapMgr->FindMap(r.mapId, instanceId))
+						if (!live->HavePlayers())
+							live->UnloadAll();
+				}
+				return true;
+			};
+		
+			bool sharedNH = IsIccOrRs(r.mapId) && IsNHSharedFor(player, r.mapId);
+		
+			if (r.diffKey == 4)
+			{
+				for (Difficulty d : raidDiffs)
+					if (resetOneMode(d))
+						++totalResets;
+			}
+			else if (sharedNH && r.diffKey == 0)
+			{
+				if (resetOneMode(RAID_DIFFICULTY_10MAN_NORMAL))  ++totalResets;
+				if (resetOneMode(RAID_DIFFICULTY_10MAN_HEROIC))  ++totalResets;
+			}
+			else if (sharedNH && r.diffKey == 1)
+			{
+				if (resetOneMode(RAID_DIFFICULTY_25MAN_NORMAL))  ++totalResets;
+				if (resetOneMode(RAID_DIFFICULTY_25MAN_HEROIC))  ++totalResets;
+			}
+			else
+			{
+				Difficulty md = DifficultyFromRaidKey(r.diffKey);
+				if (resetOneMode(md))
+					++totalResets;
+			}
+		}
 
-                uint32 instanceId = itLeader->second.save->GetInstanceId();
-
-                for (Player* target : mapTargets)
-                {
-                    BoundInstancesMap const& binds = sInstanceSaveMgr->PlayerGetBoundInstances(target->GetGUID(), d);
-                    auto it = binds.find(r.mapId);
-                    if (it == binds.end() || !it->second.save)
-                        continue;
-                    if (it->second.save->GetInstanceId() != instanceId)
-                        continue;
-
-                    sInstanceSaveMgr->PlayerUnbindInstance(target->GetGUID(), r.mapId, d, true, target);
-                }
-
-                bool someoneStillBound = InstanceHasAnyBind(instanceId);
-
-                if (!someoneStillBound)
-                {
-                    {
-                        std::ostringstream qq;
-                        qq << "DELETE FROM instance WHERE id=" << instanceId;
-                        CharacterDatabase.Execute(qq.str().c_str());
-                    }
-                    {
-                        std::ostringstream qq;
-                        qq << "DELETE FROM creature_respawn WHERE instanceId=" << instanceId;
-                        CharacterDatabase.Execute(qq.str().c_str());
-                    }
-                    {
-                        std::ostringstream qq;
-                        qq << "DELETE FROM gameobject_respawn WHERE instanceId=" << instanceId;
-                        CharacterDatabase.Execute(qq.str().c_str());
-                    }
-                    {
-                        std::ostringstream qq;
-                        qq << "DELETE FROM instance_saved_go_state_data WHERE id=" << instanceId;
-                        CharacterDatabase.Execute(qq.str().c_str());
-                    }
-
-                    if (Map* live = sMapMgr->FindMap(r.mapId, instanceId))
-                        if (!live->HavePlayers())
-                            live->UnloadAll();
-                }
-
-                ++totalResets;
-            }
-        }
     }
 
     if (totalResets == 0)
@@ -829,11 +1135,17 @@ static void ShowCategory(Player* player, Creature* creature, LockKind kind, bool
 static void ShowConfirmSingle(Player* player, Creature* creature, LockKind kind, uint32 index);
 static void ShowConfirmAll(Player* player, Creature* creature, LockKind kind);
 
-// ------- UPRAVENÉ ShowRoot --------
+// ------- ShowRoot --------
 static void ShowRoot(Player* player, Creature* creature)
 {
     if (!s.resetEnable)
         return;
+
+	if (!CanSeeMenu(player))
+	{
+		ShowOnlyLeaderInfo(player, creature);
+		return;
+	}
 
     ObjectGuid::LowType key = player->GetGUID().GetCounter();
     s_menu[key] = BuildMenuStateFor(player);
@@ -847,19 +1159,17 @@ static void ShowRoot(Player* player, Creature* creature)
     bool anyDungeonAvailable = false;
     bool anyRaidAvailable    = false;
 
-    // Dungeony
     for (auto const& row : st.dungeons)
     {
-        if (CheckAndConsumeLimit(player, false, row.mapId, false, false))
+        if (CheckAndConsumeLimit(player, false, row.mapId, row.diffKey, false, false))
             anyDungeonAvailable = true;
         else
             cappedDungeons.push_back(row.name);
     }
 
-    // Raidy
     for (auto const& row : st.raids)
     {
-        if (CheckAndConsumeLimit(player, true, row.mapId, false, false))
+        if (CheckAndConsumeLimit(player, true, row.mapId, row.diffKey, false, false))
             anyRaidAvailable = true;
         else
             cappedRaids.push_back(row.name);
@@ -918,7 +1228,8 @@ static void ShowRoot(Player* player, Creature* creature)
 
     SendGossipMenuFor(player, 1, creature->GetGUID());
 }
-// ------- KONEC ÚPRAVY ShowRoot --------
+
+// ------- ShowRoot --------
 
 static void ShowCategory(Player* player, Creature* creature, LockKind kind, bool refresh /*=false*/)
 {
@@ -945,7 +1256,7 @@ static void ShowCategory(Player* player, Creature* creature, LockKind kind, bool
     uint32 availableCount = 0;
     for (auto const& row : *vec)
     {
-        if (CheckAndConsumeLimit(player, isRaid, row.mapId, false, false))
+        if (CheckAndConsumeLimit(player, isRaid, row.mapId, row.diffKey, false, false))
             ++availableCount;
     }
 
@@ -959,7 +1270,7 @@ static void ShowCategory(Player* player, Creature* creature, LockKind kind, bool
     {
         LockRow const& row = (*vec)[i];
 
-        if (!CheckAndConsumeLimit(player, isRaid, row.mapId, false, false))
+        if (!CheckAndConsumeLimit(player, isRaid, row.mapId, row.diffKey, false, false))
             continue;
 
         uint32 action = (kind == LockKind::Dungeon)
@@ -1041,7 +1352,7 @@ static void ShowConfirmAll(Player* player, Creature* creature, LockKind kind)
     allowed.reserve(vec->size());
     for (auto const& row : *vec)
     {
-        if (CheckAndConsumeLimit(player, isRaid, row.mapId, false, false))
+        if (CheckAndConsumeLimit(player, isRaid, row.mapId, row.diffKey, false, false))
             allowed.push_back(row);
     }
 
@@ -1094,7 +1405,13 @@ public:
     {
         if (sender != GOSSIP_SENDER_MAIN)
             return false;
-
+		
+		if (!CanSeeMenu(player))
+		{
+			ShowOnlyLeaderInfo(player, creature);
+			return true;
+		}
+		
         switch (action)
         {
             case ACT_ROOT:
@@ -1238,7 +1555,7 @@ public:
             allowed.reserve(vec->size());
             for (auto const& row : *vec)
             {
-                if (CheckAndConsumeLimit(player, isRaid, row.mapId, false, false))
+                if (CheckAndConsumeLimit(player, isRaid, row.mapId, row.diffKey, false, false))
                     allowed.push_back(row);
             }
 
@@ -1297,11 +1614,11 @@ public:
         time_t raidSince  = WeeklyBoundary();
 
         auto fetchUsed = [&](uint8 kind /*0=dungeon,1=raid*/, time_t since)
-            -> std::vector<std::pair<uint32/*mapId*/, uint32/*used*/>>
+            -> std::vector<std::tuple<uint32/*mapId*/, uint8/*diffKey*/, uint32/*used*/>>
         {
-            std::vector<std::pair<uint32,uint32>> out;
+            std::vector<std::tuple<uint32,uint8,uint32>> out;
             std::ostringstream q;
-            q << "SELECT map_id, used "
+            q << "SELECT map_id, difficulty, used "
               << "FROM customs.instance_reset_limit "
               << "WHERE guid=" << guidLow
               << " AND kind=" << uint32(kind)
@@ -1313,7 +1630,7 @@ public:
                 do
                 {
                     Field* f = res->Fetch();
-                    out.emplace_back(f[0].Get<uint32>(), f[1].Get<uint32>());
+                    out.emplace_back(f[0].Get<uint32>(), f[1].Get<uint8>(), f[2].Get<uint32>());
                 } while (res->NextRow());
             }
             return out;
@@ -1333,11 +1650,14 @@ public:
         }
         else
         {
-            for (auto const& p : dungUsed)
+            for (auto const& t : dungUsed)
             {
+                uint32 mapId; uint8 diffKey; uint32 used;
+                std::tie(mapId, diffKey, used) = t;
                 std::ostringstream line;
-                line << "  " << p.second << "/" << (s.heroicPerDay ? std::to_string(s.heroicPerDay) : std::string("∞"))
-                     << " - " << GetMapName(p.first);
+                line << "  " << used << "/" << (s.heroicPerDay ? std::to_string(s.heroicPerDay) : std::string("∞"))
+                     << " - " << GetMapName(mapId)
+                     << (diffKey == 1 ? " (HC)" : " (NM)");
                 handler->SendSysMessage(line.str().c_str());
             }
         }
@@ -1353,11 +1673,16 @@ public:
         }
         else
         {
-            for (auto const& p : raidUsed)
+            for (auto const& t : raidUsed)
             {
+                uint32 mapId; uint8 diffKey; uint32 used;
+                std::tie(mapId, diffKey, used) = t;
                 std::ostringstream line;
-                line << "  " << p.second << "/" << (s.raidPerWeek ? std::to_string(s.raidPerWeek) : std::string("∞"))
-                     << " - " << GetMapName(p.first);
+                line << "  " << used << "/" << (s.raidPerWeek ? std::to_string(s.raidPerWeek) : std::string("∞"))
+                     << " - " << GetMapName(mapId);
+                bool shared = IsIccOrRs(mapId) && IsNHSharedFor(pl, mapId);
+				if (diffKey <= 4)
+					line << RaidKeyLabel(diffKey, shared);
                 handler->SendSysMessage(line.str().c_str());
             }
         }
@@ -1395,7 +1720,7 @@ public:
     }
 };
 
-} // namespace itools
+}
 
 // ---------------- Entry point ----------------
 void RegisterVoATeleporter();
@@ -1407,4 +1732,3 @@ void Addmod_instance_toolsScripts()
     new itools::InstanceTools_CommandScript();
     RegisterVoATeleporter();
 }
-
