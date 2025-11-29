@@ -51,7 +51,5 @@ Pokud máš v databázi již jiné záznamy s těmito ID, je potřeba čísla v 
   - enabled = povolí nebo zakáže reset dané instance.
   - comment = pouze informativní.
   - `Pozor: neměnit enabled pro ICC a RS pokud nemáte vypnuté sdílení lockoutu ve worldserver.conf`
-## License
-This module is licensed under the [GNU General Public License v3.0 (GPL-3.0)](LICENSE).
 
 

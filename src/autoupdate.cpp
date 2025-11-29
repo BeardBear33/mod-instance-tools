@@ -1,4 +1,4 @@
-// modules/mod-your-module/src/autoupdate.cpp
+// modules/mod-instance-tools/src/autoupdate.cpp
 
 #include "ScriptMgr.h"
 #include "DatabaseEnv.h"

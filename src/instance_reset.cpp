@@ -1728,9 +1728,10 @@ void RegisterVoATeleporter();
 
 void Addmod_instance_toolsScripts()
 {
-    new itools::ITools_WorldScript();
+    RegisterInstanceToolsCustomsUpdater();
+	
+	new itools::ITools_WorldScript();
     new itools::npc_instance_reset();
     new itools::InstanceTools_CommandScript();
-	RegisterInstanceToolsCustomsUpdater();
     RegisterVoATeleporter();
 }
