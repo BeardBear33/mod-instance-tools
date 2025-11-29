@@ -3,6 +3,7 @@ project(mod-instance-tools)
 
 set(scripts_STAT_SRCS
   src/instance_reset.cpp
+  src/autoupdate.cpp
   src/voa_teleport.cpp
 )
 

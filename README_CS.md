@@ -11,11 +11,14 @@ Tento modul umožňuje:
 - Teleportovat do VoA, i když nevlastní Wintergrasp
 - Nastavit cenu pro teleport do VoA
 
-### Požadavky  
-Před použitím je nutné zajistit, aby uživatel databáze z `WorldDatabaseInfo` (standardně `acore`) měl práva i na novou databázi `customs`:  
+### Instalace / Požadavky  
+Modul obsahuje autoupdater tudíž není potřeba ručně importovat .sql  
+Pro správnou funkčnost autoupdateru je nutné zajistit, aby uživatel databáze z `(WorldDatabaseInfo) – "127.0.0.1;3306;acore;acore;acore_world"`  
+měl práva i na novou databázi customs:
 
-```sql
-GRANT ALL PRIVILEGES ON customs.* TO 'acore'@'localhost';
+```
+GRANT CREATE ON *.* TO 'acore'@'127.0.0.1';
+GRANT ALL PRIVILEGES ON customs.* TO 'acore'@'127.0.0.1';
 FLUSH PRIVILEGES;
 ```
 

@@ -5,12 +5,12 @@
 -- =========================================
 
 -- Models
-INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`) VALUES
+INSERT IGNORE INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`) VALUES
 (987456, 0, 26693, 0.75, 1, 12340),
 (987457, 0, 17544, 1,    1, 12340);
 
 -- Templates
-INSERT INTO `creature_template` (
+INSERT IGNORE INTO `creature_template` (
     `entry`, `difficulty_entry_1`, `difficulty_entry_2`, `difficulty_entry_3`,
     `KillCredit1`, `KillCredit2`,
     `name`, `subname`, `IconName`, `gossip_menu_id`,

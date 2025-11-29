@@ -11,11 +11,14 @@ This module allows you to:
 - Teleport to VoA even when you don’t own Wintergrasp
 - Set a price for teleporting to VoA
 
-### Requirements  
-Before using, make sure the database user from `WorldDatabaseInfo` (default `acore`) also has privileges for the new `customs` database:  
+### Installation / Requirements
+The module includes an autoupdater, so there’s no need to manually import any .sql files.  
+For the autoupdater to function correctly, it is necessary to ensure that the database user from `(WorldDatabaseInfo) – "127.0.0.1;3306;acore;acore;acore_world"`  
+has permissions for the new `customs` database as well:
 
-```sql
-GRANT ALL PRIVILEGES ON customs.* TO 'acore'@'localhost';
+```
+GRANT CREATE ON *.* TO 'acore'@'127.0.0.1';
+GRANT ALL PRIVILEGES ON customs.* TO 'acore'@'127.0.0.1';
 FLUSH PRIVILEGES;
 ```
 

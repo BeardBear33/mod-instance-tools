@@ -4,12 +4,8 @@
 -- instance_reset_limit
 -- ================================
 
--- Create customs DB if not exist
-CREATE DATABASE IF NOT EXISTS `customs`;
-USE `customs`;
-
 -- Create instance catalog for price / enable or disable specific dungeon and raid reset
-CREATE TABLE IF NOT EXISTS `instance_reset_catalog` (
+CREATE TABLE IF NOT EXISTS `customs`.`instance_reset_catalog` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
   `map_id` smallint unsigned NOT NULL,
   `difficulty` tinyint unsigned NOT NULL,
@@ -24,7 +20,7 @@ CREATE TABLE IF NOT EXISTS `instance_reset_catalog` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Insert basic dungeons and raids to catalog
-INSERT INTO `instance_reset_catalog` (`id`, `map_id`, `difficulty`, `is_raid`, `price_gold`, `emblem_item`, `emblem_count`, `enabled`, `comment`) VALUES
+INSERT IGNORE INTO `customs`.`instance_reset_catalog` (`id`, `map_id`, `difficulty`, `is_raid`, `price_gold`, `emblem_item`, `emblem_count`, `enabled`, `comment`) VALUES
 	(1, 309, 0, 1, 5, 0, 0, 1, 'Zul\'Gurub'),
 	(2, 409, 0, 1, 10, 0, 0, 1, 'Molten Core'),
 	(3, 469, 0, 1, 15, 0, 0, 1, 'Blackwing Lair'),
@@ -82,7 +78,7 @@ INSERT INTO `instance_reset_catalog` (`id`, `map_id`, `difficulty`, `is_raid`, `
 	(55, 724, 0, 1, 1000, 37711, 10, 1, 'The Ruby Sanctum');
 
 -- Create limit check for player instance reset
-CREATE TABLE IF NOT EXISTS `instance_reset_limit` (
+CREATE TABLE IF NOT EXISTS `customs`.`instance_reset_limit` (
   `guid` int unsigned NOT NULL,
   `kind` tinyint unsigned NOT NULL,
   `map_id` smallint unsigned NOT NULL,
