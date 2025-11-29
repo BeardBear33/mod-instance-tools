@@ -275,9 +275,9 @@ public:
         fs::path dirInc  = sqlRoot / "updates_include";
         fs::path dirUpd  = sqlRoot / "updates";
 
-        LOG_INFO("gv.customs", "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
-        LOG_INFO("gv.customs", "┃ Instance Tools – Customs SQL Updater (auto)         ┃");
-        LOG_INFO("gv.customs", "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
+        LOG_INFO("gv.customs", "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
+        LOG_INFO("gv.customs", "┃ Instance Tools – Customs SQL Updater ┃");
+        LOG_INFO("gv.customs", "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
         LOG_INFO("gv.customs", "[customs] Module: {}", moduleName);
         LOG_INFO("gv.customs", "[customs] SQL root: {}", sqlRoot.string());
 
