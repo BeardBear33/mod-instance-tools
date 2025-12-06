@@ -22,6 +22,12 @@ GRANT ALL PRIVILEGES ON customs.* TO 'acore'@'127.0.0.1';
 FLUSH PRIVILEGES;
 ```
 
+**Volitelné:**
+- Přidej do worldserver.conf tento řádek:  
+  Logger.gv.customs=3,Console Server
+  
+##
+
 ### ⚠️ Upozornění
 Modul používá vlastní **entry** v tabulkách `creature_template`, `creature_template_model`.  
 Je nutné zajistit, že tato ID nejsou v `acore_world` již obsazená jiným obsahem:

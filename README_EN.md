@@ -1,6 +1,6 @@
 # mod-instance-tools
 
-### 🇨🇿 [Czech version](README.md)
+### 🇨🇿 [Czech version](README_CS.md)
 
 ## Description (EN)
 This module allows you to:
@@ -21,6 +21,12 @@ GRANT CREATE ON *.* TO 'acore'@'127.0.0.1';
 GRANT ALL PRIVILEGES ON customs.* TO 'acore'@'127.0.0.1';
 FLUSH PRIVILEGES;
 ```
+
+**Optional:**
+- Add this line to worldserver.conf:  
+  Logger.gv.customs=3,Console Server
+
+##
 
 ### ⚠️ Warning
 The module uses its own **entry** in the tables `creature_template`, `creature_template_model`.
