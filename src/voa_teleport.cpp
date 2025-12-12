@@ -59,7 +59,6 @@ struct CfgVoA
     bool   voaEnable             = true;
     uint32 voaMinLv              = 80;
     bool   voaAllowCombat        = false;
-    bool   voaForceFreshInstance = true;
     Price  voaPrice;
     uint32 voaMap = 624;
     float  voaX   = -406.07938f;
@@ -84,7 +83,6 @@ static void LoadCfg()
     s.voaEnable      = CBool("VoATeleporter.Enable", true);
     s.voaMinLv       = CUInt("VoATeleporter.MinLevel", 80);
     s.voaAllowCombat = CBool("VoATeleporter.AllowWhileInCombat", false);
-    s.voaForceFreshInstance = CBool("VoATeleporter.ForceFreshInstance", true);
 
     s.voaPrice.goldG       = CUInt("VoATeleporter.Price.Gold", 0);
     s.voaPrice.emblemId    = CUInt("VoATeleporter.Price.EmblemItemId", 0);
@@ -260,43 +258,6 @@ static std::string PriceLine()
     return o.str();
 }
 
-// --- VoA mapId a přehled raid diffů (10/25 N/H) ---
-static constexpr uint32 VOA_MAP_ID = 624;
-static Difficulty const kRaidDiffs[] = {
-    RAID_DIFFICULTY_10MAN_NORMAL,
-    RAID_DIFFICULTY_25MAN_NORMAL,
-    RAID_DIFFICULTY_10MAN_HEROIC,
-    RAID_DIFFICULTY_25MAN_HEROIC
-};
-
-static bool HasAnyVoABind(Player* pl)
-{
-    if (!pl)
-        return false;
-
-    for (Difficulty d : kRaidDiffs)
-    {
-        BoundInstancesMap const& binds = sInstanceSaveMgr->PlayerGetBoundInstances(pl->GetGUID(), d);
-        if (binds.find(VOA_MAP_ID) != binds.end())
-            return true;
-    }
-    return false;
-}
-
-static void UnbindAllVoA(Player* pl)
-{
-    if (!pl) return;
-    for (Difficulty d : kRaidDiffs)
-    {
-        BoundInstancesMap const& binds = sInstanceSaveMgr->PlayerGetBoundInstances(pl->GetGUID(), d);
-        auto it = binds.find(VOA_MAP_ID);
-        if (it != binds.end() && it->second.save)
-        {
-            sInstanceSaveMgr->PlayerUnbindInstance(pl->GetGUID(), VOA_MAP_ID, d, true, pl);
-        }
-    }
-}
-
 // ---------------- Gossip helpers (sekce) ----------------
 enum : uint32
 {
@@ -394,9 +355,6 @@ static bool DoTeleport(Player* player)
         ChatHandler(player->GetSession()).SendSysMessage(T("[VoA] Nemáš dostatek měny.", "[VoA] You don't have enough currency."));
         return false;
     }
-
-    if (s.voaForceFreshInstance && !HasAnyVoABind(player))
-        UnbindAllVoA(player);
 
     bool ok = player->TeleportTo(s.voaMap, s.voaX, s.voaY, s.voaZ, s.voaO);
     if (!ok)
