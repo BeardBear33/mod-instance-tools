@@ -12,7 +12,13 @@
 - NPC for Instance Reset is spawned with the command `.npc add 987457`.
 - NPC for VoA teleport is spawned with the command `.npc add 987456`.
 
-----
+----------------------------------------------------------------------------------------------------------------
+
+## Addon
+> **Doporučený addon pro WoW 3.3.5a zajišťující správné zobrazování diakritiky:**  
+> [CzechFontFix (3.3.5a Addon)](https://github.com/BeardBear33/mod-guild-village/releases/tag/CFF_2.0)
+
+----------------------------------------------------------------------------------------------------------------
 
 🌍 **Výběr jazyka / Choose language:**
 - [Čeština](https://github.com/BeardBear33/mod-instance-tools/blob/main/README_CS.md)
@@ -26,7 +32,7 @@
 > ⚠️ **Notice (EN):**
 > Before applying this module, make sure to **carefully** read [README_EN.md](https://github.com/BeardBear33/mod-instance-tools/blob/main/README_EN.md). It contains important information about the module’s behavior and limitations.
 
-----
+----------------------------------------------------------------------------------------------------------------
 
 🔧 Tento modul je primárně vyvíjen a testován na Ubuntu v kombinaci s:  
 [AzerothCore WotLK (Playerbot branch)](https://github.com/liyunfan1223/azerothcore-wotlk/tree/Playerbot)
@@ -40,7 +46,7 @@
 
 [mod-playerbots (master branch)](https://github.com/liyunfan1223/mod-playerbots)
 
-----
+----------------------------------------------------------------------------------------------------------------
 
 ## License
 This module is licensed under the [GNU Affero General Public License v3.0](https://github.com/BeardBear33/mod-instance-tools/blob/main/LICENSE).
