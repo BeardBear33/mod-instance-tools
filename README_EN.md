@@ -58,6 +58,7 @@ If you already have other records in the database using these IDs, you must shif
   - emblem_item = any item required to reset the instance
   - emblem_count = number of items required to reset the instance
   - enabled = enables or disables resetting of the given instance
+  - display_name = Optional custom label for gossip and the .instance limit / .i limit commands. If empty (or whitespace only), the default name is used (map name from the client, plus the raid difficulty suffix). If set, that text is shown instead.
   - comment = informational only
   - `Warning: do not change enabled for ICC and RS unless you have disabled lockout sharing in worldserver.conf.`
 

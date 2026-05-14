@@ -24,6 +24,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
+#include <cctype>
 
 #include "itools_names.h"
 
@@ -71,11 +72,12 @@ static bool CanSeeMenu(Player* p);
 // ---------------- Konfigurace ----------------
 struct Price
 {
-    uint32 goldG       = 0;
-    uint32 emblemId    = 0;
-    uint32 emblemCount = 0;
-    bool   configured  = false;
-    bool   disabled    = false;
+    uint32      goldG       = 0;
+    uint32      emblemId    = 0;
+    uint32      emblemCount = 0;
+    bool        configured  = false;
+    bool        disabled    = false;
+    std::string displayName;
 };
 
 struct Cfg
@@ -496,6 +498,7 @@ static Price PriceForInstance(uint32 mapId, Difficulty diff, bool isRaid)
 
             p.configured  = true;
             p.disabled    = (enabled == 0);
+            p.displayName = f[4].Get<std::string>();
 
             if (!p.disabled)
             {
@@ -521,7 +524,7 @@ static Price PriceForInstance(uint32 mapId, Difficulty diff, bool isRaid)
         }
 
         std::ostringstream q;
-        q << "SELECT enabled, price_gold, emblem_item, emblem_count "
+        q << "SELECT enabled, price_gold, emblem_item, emblem_count, IFNULL(display_name,'') "
           << "FROM customs.instance_reset_catalog "
           << "WHERE map_id=" << mapId
           << " AND difficulty=" << catDiff;
@@ -536,7 +539,7 @@ static Price PriceForInstance(uint32 mapId, Difficulty diff, bool isRaid)
     else
     {
         std::ostringstream q;
-        q << "SELECT enabled, price_gold, emblem_item, emblem_count "
+        q << "SELECT enabled, price_gold, emblem_item, emblem_count, IFNULL(display_name,'') "
           << "FROM customs.instance_reset_catalog "
           << "WHERE map_id=" << mapId
           << " AND difficulty=" << uint32(diff);
@@ -587,6 +590,30 @@ static std::string GetMapName(uint32 mapId)
             return std::string(me->name[0]);
     }
     return T("Neznámá instance", "Unknown instance");
+}
+
+static std::string TrimCatalogDisplay(std::string s)
+{
+    auto notspace = [](int ch) { return !std::isspace(ch); };
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), notspace));
+    s.erase(std::find_if(s.rbegin(), s.rend(), notspace).base(), s.end());
+    return s;
+}
+
+static std::string CatalogGossipName(std::string const& fromCatalog, std::string fallback)
+{
+    std::string const t = TrimCatalogDisplay(fromCatalog);
+    return t.empty() ? std::move(fallback) : std::string(t);
+}
+
+static std::string FetchCatalogDisplayName(uint32 mapId, uint32 catalogDifficulty)
+{
+    std::ostringstream q;
+    q << "SELECT IFNULL(display_name,'') FROM customs.instance_reset_catalog WHERE map_id=" << mapId
+      << " AND difficulty=" << catalogDifficulty << " LIMIT 1";
+    if (QueryResult res = WorldDatabase.Query(q.str().c_str()))
+        return res->Fetch()[0].Get<std::string>();
+    return {};
 }
 
 static MenuState BuildMenuStateFor(Player* pl)
@@ -644,7 +671,7 @@ static MenuState BuildMenuStateFor(Player* pl)
                 row.price      = PriceForInstance(mapId, row.diff, false);
                 if (row.price.disabled)
                     continue;
-                row.name       = GetMapName(mapId);
+                row.name       = CatalogGossipName(row.price.displayName, GetMapName(mapId));
                 ms.dungeons.push_back(row);
             }
             else
@@ -684,7 +711,10 @@ static MenuState BuildMenuStateFor(Player* pl)
 						continue;
 			
 					row.diffKey = key;
-					row.name    = GetMapName(mapId) + std::string(RaidKeyLabel(key, /*sharedNH=*/true));
+					{
+						std::string fb = GetMapName(mapId) + std::string(RaidKeyLabel(key, /*sharedNH=*/true));
+						row.name = CatalogGossipName(row.price.displayName, std::move(fb));
+					}
 				}
 				else
 				{
@@ -693,7 +723,10 @@ static MenuState BuildMenuStateFor(Player* pl)
 					row.price   = PriceForInstance(mapId, row.diff, true);
 					if (row.price.disabled)
 						continue;
-					row.name    = GetMapName(mapId) + std::string(RaidKeyLabel(key, /*sharedNH=*/false));
+					{
+						std::string fb = GetMapName(mapId) + std::string(RaidKeyLabel(key, /*sharedNH=*/false));
+						row.name = CatalogGossipName(row.price.displayName, std::move(fb));
+					}
 				}
 			
 				row.kind = LockKind::Raid;
@@ -712,7 +745,7 @@ static MenuState BuildMenuStateFor(Player* pl)
     for (uint32 mapId : raidMapsPresent)
     {
         std::ostringstream q;
-        q << "SELECT enabled, price_gold, emblem_item, emblem_count "
+        q << "SELECT enabled, price_gold, emblem_item, emblem_count, IFNULL(display_name,'') "
           << "FROM customs.instance_reset_catalog "
           << "WHERE map_id=" << mapId << " AND difficulty=4";
 
@@ -724,6 +757,7 @@ static MenuState BuildMenuStateFor(Player* pl)
             uint8 enabled = f[0].Get<uint8>();
             pAll.configured  = true;
             pAll.disabled    = (enabled == 0);
+            pAll.displayName = f[4].Get<std::string>();
             if (!pAll.disabled)
             {
                 pAll.goldG       = f[1].Get<uint32>();
@@ -747,7 +781,7 @@ static MenuState BuildMenuStateFor(Player* pl)
                 row.diffKey    = 4;
                 row.kind       = LockKind::Raid;
                 row.price      = pAll;
-                row.name       = GetMapName(mapId);
+                row.name       = CatalogGossipName(pAll.displayName, GetMapName(mapId));
 
                 ms.raids.push_back(row);
             }
@@ -1655,9 +1689,12 @@ public:
                 uint32 mapId; uint8 diffKey; uint32 used;
                 std::tie(mapId, diffKey, used) = t;
                 std::ostringstream line;
-                line << "  " << used << "/" << (s.heroicPerDay ? std::to_string(s.heroicPerDay) : std::string("∞"))
-                     << " - " << GetMapName(mapId)
-                     << (diffKey == 1 ? " (HC)" : " (NM)");
+                {
+                    std::string fb = GetMapName(mapId);
+                    fb += (diffKey == 1 ? " (HC)" : " (NM)");
+                    line << "  " << used << "/" << (s.heroicPerDay ? std::to_string(s.heroicPerDay) : std::string("∞"))
+                         << " - " << CatalogGossipName(FetchCatalogDisplayName(mapId, diffKey), std::move(fb));
+                }
                 handler->SendSysMessage(line.str().c_str());
             }
         }
@@ -1678,11 +1715,14 @@ public:
                 uint32 mapId; uint8 diffKey; uint32 used;
                 std::tie(mapId, diffKey, used) = t;
                 std::ostringstream line;
-                line << "  " << used << "/" << (s.raidPerWeek ? std::to_string(s.raidPerWeek) : std::string("∞"))
-                     << " - " << GetMapName(mapId);
                 bool shared = IsIccOrRs(mapId) && IsNHSharedFor(pl, mapId);
-				if (diffKey <= 4)
-					line << RaidKeyLabel(diffKey, shared);
+                {
+                    std::string fb = GetMapName(mapId);
+                    if (diffKey <= 4)
+                        fb += RaidKeyLabel(diffKey, shared);
+                    line << "  " << used << "/" << (s.raidPerWeek ? std::to_string(s.raidPerWeek) : std::string("∞"))
+                         << " - " << CatalogGossipName(FetchCatalogDisplayName(mapId, diffKey), std::move(fb));
+                }
                 handler->SendSysMessage(line.str().c_str());
             }
         }

@@ -55,6 +55,7 @@ Pokud máš v databázi již jiné záznamy s těmito ID, je potřeba čísla v 
   - emblem_item = libovolný item potřebný pro reset instance.
   - emblem_count = počet itemů potřebných pro reset instance.
   - enabled = povolí nebo zakáže reset dané instance.
+  - display_name = Vlastní zobrazený název pro gossip a .instance limit. Prázdné = výchozí název z mapy (+ suffix raidu), jinak se zobrazí vyplněný text.
   - comment = pouze informativní.
   - `Pozor: neměnit enabled pro ICC a RS pokud nemáte vypnuté sdílení lockoutu ve worldserver.conf`
 
