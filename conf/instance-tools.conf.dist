@@ -11,6 +11,10 @@ InstanceTools.Locale = cs
 # Enable/disable reset NPC module
 ResetNPC.Enable = 1
 
+# Povolit menu „World Boss“ u reset NPC (zobrazí se jen pokud je boss mrtvý a je v creature_respawn)
+# Enable „World Boss“ menu on reset NPC (shown only when a catalog boss is dead in creature_respawn)
+ResetNPC.WorldBoss.Enable = 0
+
 # Povolí/Zakáže reset v instanci
 # Enable/Disable reset in instance
 ResetNPC.Checks.RequireNotInInstance = 1
@@ -68,6 +72,10 @@ ResetNPC.Limits.HeroicPerDay = 2
 # Týdenní limit pro raidy
 # Weekly limit for raids
 ResetNPC.Limits.RaidPerWeek = 2
+
+# Týdenní limit pro world bossy (0 = neomezeno). Sdílí týdenní okno s raidy.
+# Weekly limit for world bosses (0 = unlimited). Uses the same weekly window as raids.
+ResetNPC.Limits.WorldBossPerWeek = 2
 
 # Denní reset (HH:MM, 24h). Pokud je teď před HH:MM → bere včerejší HH:MM.
 # Daily reset start time (HH:MM, 24h). If now < HH:MM → uses yesterday HH:MM.

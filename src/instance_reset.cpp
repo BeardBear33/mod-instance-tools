@@ -15,6 +15,7 @@
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Group.h"
+#include "CreatureData.h"
 
 #include <vector>
 #include <ctime>
@@ -83,11 +84,13 @@ struct Price
 struct Cfg
 {
     bool   resetEnable        = true;
+    bool   worldBossEnable    = false;
     bool   checkNotInInstance = true;
     bool   checkNotInCombat   = true;
     bool   resetGroup         = true;
     uint32 heroicPerDay       = 0;
     uint32 raidPerWeek        = 0;
+    uint32 worldBossPerWeek   = 0;
     bool   gmBypassLimits     = true;
     bool   limitsApplyToMember = true;
     uint8  dailyHour   = 5;
@@ -116,12 +119,14 @@ static std::string CStr(char const* k, char const* d) { return sConfigMgr->GetOp
 static void LoadCfg()
 {
     s.resetEnable        = CBool("ResetNPC.Enable", true);
+    s.worldBossEnable    = CBool("ResetNPC.WorldBoss.Enable", false);
     s.checkNotInInstance = CBool("ResetNPC.Checks.RequireNotInInstance", true);
     s.checkNotInCombat   = CBool("ResetNPC.Checks.RequireNotInCombat", true);
     s.resetGroup         = CBool("ResetNPC.Reset.Group", true);
 
     s.heroicPerDay       = CUInt("ResetNPC.Limits.HeroicPerDay", 0);
     s.raidPerWeek        = CUInt("ResetNPC.Limits.RaidPerWeek", 0);
+    s.worldBossPerWeek   = CUInt("ResetNPC.Limits.WorldBossPerWeek", 0);
     s.gmBypassLimits     = CBool("ResetNPC.Limits.GMBypass", true);
     s.limitsApplyToMember = CBool("ResetNPC.Limits.ApplyToMember", true);
 
@@ -412,9 +417,72 @@ static inline const char* RaidKeyLabel(uint8 key, bool sharedNH)
 // ---------------- Limity přes customs.instance_reset_limit ----------------
 enum class LimitKind : uint8
 {
-    DungeonDay = 0,
-    RaidWeek   = 1
+    DungeonDay    = 0,
+    RaidWeek      = 1,
+    WorldBossWeek = 2
 };
+
+static bool CheckAndConsumeWorldBossLimit(Player* player, uint32 creatureId, bool consume, bool sendError)
+{
+    uint32 maxCount = s.worldBossPerWeek;
+    if (maxCount == 0)
+        return true;
+    if (s.gmBypassLimits && player->IsGameMaster())
+        return true;
+
+    uint32 guidLow = player->GetGUID().GetCounter();
+    uint32 boundary = uint32(WeeklyBoundary());
+
+    uint32 windowStart = 0;
+    uint32 used = 0;
+
+    {
+        std::ostringstream q;
+        q << "SELECT window_start, used FROM customs.instance_reset_limit "
+          << "WHERE guid=" << guidLow
+          << " AND kind=" << uint32(LimitKind::WorldBossWeek)
+          << " AND map_id=" << creatureId
+          << " AND difficulty=0";
+        if (QueryResult res = CharacterDatabase.Query(q.str().c_str()))
+        {
+            Field* f = res->Fetch();
+            windowStart = f[0].Get<uint32>();
+            used        = f[1].Get<uint32>();
+        }
+    }
+
+    if (windowStart < boundary)
+    {
+        windowStart = boundary;
+        used = 0;
+    }
+
+    if (used >= maxCount)
+    {
+        if (sendError)
+            ChatHandler(player->GetSession()).SendSysMessage(
+                T("[Reset] Týdenní limit resetů pro tento world boss je vyčerpán.",
+                  "[Reset] Weekly reset limit for this world boss has been reached."));
+        return false;
+    }
+
+    if (!consume)
+        return true;
+
+    ++used;
+
+    std::ostringstream up;
+    up << "REPLACE INTO customs.instance_reset_limit (guid,kind,map_id,difficulty,window_start,used) VALUES ("
+       << guidLow << ","
+       << uint32(LimitKind::WorldBossWeek) << ","
+       << creatureId << ","
+       << "0,"
+       << windowStart << ","
+       << used << ")";
+    CharacterDatabase.DirectExecute(up.str().c_str());
+
+    return true;
+}
 
 static bool CheckAndConsumeLimit(Player* player, bool isRaid, uint32 mapId, uint8 diffKey, bool consume, bool sendError)
 {
@@ -568,13 +636,299 @@ struct LockRow
     std::string name;
 };
 
+struct WorldBossRow
+{
+    uint32              catalogId     = 0;
+    uint32              creatureId    = 0;
+    std::vector<uint32> deadSpawnGuids;
+    Price               price;
+    std::string         name;
+};
+
 struct MenuState
 {
-    std::vector<LockRow> dungeons;
-    std::vector<LockRow> raids;
+    std::vector<LockRow>      dungeons;
+    std::vector<LockRow>      raids;
+    std::vector<WorldBossRow> worldBosses;
 };
 
 static std::unordered_map<ObjectGuid::LowType, MenuState> s_menu;
+
+// ---------------- World boss: customs.worldboss_reset_catalog + creature_respawn ----------------
+static Price SumPrices(std::vector<LockRow> const& v);
+static std::string CatalogGossipName(std::string const& fromCatalog, std::string fallback);
+
+static std::string GetCreatureTemplateName(uint32 entry)
+{
+    if (CreatureTemplate const* ct = sObjectMgr->GetCreatureTemplate(entry))
+        if (!ct->Name.empty())
+            return ct->Name;
+    return T("Neznámý world boss", "Unknown world boss");
+}
+
+static std::vector<uint32> GetWorldSpawnGuidsForEntry(uint32 creatureId)
+{
+    std::vector<uint32> guids;
+    if (QueryResult res = WorldDatabase.Query("SELECT guid FROM creature WHERE id1 = {}", creatureId))
+    {
+        do
+            guids.push_back(res->Fetch()[0].Get<uint32>());
+        while (res->NextRow());
+    }
+    return guids;
+}
+
+static bool IsSpawnGuidAwaitingRespawn(uint32 spawnGuid, time_t now)
+{
+    if (QueryResult res = CharacterDatabase.Query(
+            "SELECT respawnTime FROM creature_respawn WHERE guid = {} AND instanceId = 0 LIMIT 1", spawnGuid))
+    {
+        uint32 respawnTime = res->Fetch()[0].Get<uint32>();
+        return respawnTime > uint32(now);
+    }
+    return false;
+}
+
+static std::vector<WorldBossRow> BuildWorldBossRows()
+{
+    std::vector<WorldBossRow> out;
+    if (!s.worldBossEnable)
+        return out;
+
+    time_t now = std::time(nullptr);
+
+    if (QueryResult cat = WorldDatabase.Query(
+            "SELECT id, creature_id, enabled, price_gold, emblem_item, emblem_count, IFNULL(display_name,'') "
+            "FROM customs.worldboss_reset_catalog"))
+    {
+        do
+        {
+            Field* f = cat->Fetch();
+            uint32 catalogId  = f[0].Get<uint32>();
+            uint32 creatureId = f[1].Get<uint32>();
+            Price p;
+            uint8 enabled = f[2].Get<uint8>();
+            p.configured  = true;
+            p.disabled    = (enabled == 0);
+            p.displayName = f[6].Get<std::string>();
+            if (!p.disabled)
+            {
+                p.goldG       = f[3].Get<uint32>();
+                p.emblemId    = f[4].Get<uint32>();
+                p.emblemCount = f[5].Get<uint32>();
+            }
+            if (p.disabled)
+                continue;
+
+            std::vector<uint32> spawnGuids = GetWorldSpawnGuidsForEntry(creatureId);
+            if (spawnGuids.empty())
+                continue;
+
+            std::vector<uint32> deadGuids;
+            deadGuids.reserve(spawnGuids.size());
+            for (uint32 guid : spawnGuids)
+            {
+                if (IsSpawnGuidAwaitingRespawn(guid, now))
+                    deadGuids.push_back(guid);
+            }
+
+            if (deadGuids.empty())
+                continue;
+
+            WorldBossRow row;
+            row.catalogId      = catalogId;
+            row.creatureId     = creatureId;
+            row.deadSpawnGuids = std::move(deadGuids);
+            row.price          = p;
+            row.name           = CatalogGossipName(p.displayName, GetCreatureTemplateName(creatureId));
+            out.push_back(std::move(row));
+        } while (cat->NextRow());
+    }
+
+    return out;
+}
+
+static bool CanAffordPrice(Player* player, Price const& price)
+{
+    if (price.goldG && player->GetMoney() < int64(uint64(price.goldG) * GOLD))
+        return false;
+    if (price.emblemId && price.emblemCount
+        && player->GetItemCount(price.emblemId) < price.emblemCount)
+        return false;
+    return true;
+}
+
+static void ClearWorldBossRespawnState(Map* map, uint32 spawnGuid)
+{
+    map->RemoveCreatureRespawnTime(spawnGuid);
+
+    CharacterDatabase.DirectExecute(
+        "DELETE FROM creature_respawn WHERE guid = {} AND instanceId = 0", spawnGuid);
+}
+
+static bool ForceRespawnWorldSpawn(uint32 spawnGuid)
+{
+    CreatureData const* data = sObjectMgr->GetCreatureData(spawnGuid);
+    if (!data)
+        return false;
+
+    Map* map = sMapMgr->FindMap(data->mapid, 0);
+    if (!map)
+        map = sMapMgr->CreateBaseMap(data->mapid);
+    if (!map)
+        return false;
+
+    map->LoadGrid(data->posX, data->posY);
+
+    // Must clear in-memory respawn before LoadFromDB, otherwise creature loads as dead.
+    ClearWorldBossRespawnState(map, spawnGuid);
+
+    ObjectGuid guid = ObjectGuid::Create<HighGuid::Unit>(data->id1, spawnGuid);
+
+    if (Creature* existing = map->GetCreature(guid))
+    {
+        if (existing->IsAlive())
+            return true;
+
+        existing->RemoveCorpse(false);
+        existing->Respawn(true);
+
+        if (Creature* after = map->GetCreature(guid))
+            return after->IsAlive();
+
+        return false;
+    }
+
+    Creature* creature = new Creature();
+    if (!creature->LoadCreatureFromDB(spawnGuid, map, true, true))
+    {
+        delete creature;
+        return false;
+    }
+
+    return creature->IsAlive();
+}
+
+static bool DoWorldBossReset(Player* player, std::vector<WorldBossRow> const& list, Price const& price)
+{
+    if (list.empty())
+    {
+        ChatHandler(player->GetSession()).SendSysMessage(
+            T("[Reset] Není žádný world boss k obnovení.", "[Reset] There is no world boss to restore."));
+        return false;
+    }
+
+    if (s.checkNotInCombat && player->IsInCombat())
+    {
+        ChatHandler(player->GetSession()).SendSysMessage(T("[Reset] Jsi v boji.", "[Reset] You are in combat."));
+        return false;
+    }
+
+    if (s.checkNotInInstance && player->GetMap()->IsDungeon())
+    {
+        ChatHandler(player->GetSession()).SendSysMessage(
+            T("[Reset] Nelze provést uvnitř instance.", "[Reset] Cannot be performed inside an instance."));
+        return false;
+    }
+
+    if (s.resetGroup)
+    {
+        if (Group* g = player->GetGroup())
+        {
+            if (!g->IsLeader(player->GetGUID()))
+            {
+                ChatHandler(player->GetSession()).SendSysMessage(
+                    T("[Reset] Resetovat můžeš pouze mimo partu/raid, nebo pokud jsi leader groupy.",
+                      "[Reset] You can reset only when not in a group/raid, or if you're the group leader."));
+                return false;
+            }
+        }
+    }
+
+    if (!CanAffordPrice(player, price))
+    {
+        ChatHandler(player->GetSession()).SendSysMessage(
+            T("[Reset] Nemáš dostatek zlata nebo tokenů.", "[Reset] You do not have enough gold or tokens."));
+        return false;
+    }
+
+    uint32 respawned = 0;
+    time_t now = std::time(nullptr);
+
+    for (WorldBossRow const& row : list)
+    {
+        if (!CheckAndConsumeWorldBossLimit(player, row.creatureId, false, false))
+            continue;
+
+        bool rowRespawned = false;
+        for (uint32 spawnGuid : row.deadSpawnGuids)
+        {
+            if (!IsSpawnGuidAwaitingRespawn(spawnGuid, now))
+                continue;
+
+            if (ForceRespawnWorldSpawn(spawnGuid))
+                rowRespawned = true;
+        }
+
+        if (!rowRespawned)
+            continue;
+
+        if (!CheckAndConsumeWorldBossLimit(player, row.creatureId, true, false))
+            continue;
+
+        ++respawned;
+    }
+
+    if (respawned == 0)
+    {
+        ChatHandler(player->GetSession()).SendSysMessage(
+            T("[Reset] World boss už není mrtvý, není v creature_respawn, nebo je vyčerpán limit.",
+              "[Reset] The world boss is no longer dead, not in creature_respawn, or the limit was reached."));
+        return false;
+    }
+
+    if (price.goldG)
+        player->ModifyMoney(-int64(uint64(price.goldG) * GOLD));
+    if (price.emblemId && price.emblemCount)
+        player->DestroyItemCount(price.emblemId, price.emblemCount, true);
+
+    ChatHandler(player->GetSession()).SendSysMessage(T("[Reset] World boss obnoven.", "[Reset] World boss respawned."));
+    return true;
+}
+
+static std::vector<WorldBossRow> FilterWorldBossesByLimit(Player* player, std::vector<WorldBossRow> const& rows)
+{
+    std::vector<WorldBossRow> allowed;
+    allowed.reserve(rows.size());
+    for (auto const& row : rows)
+    {
+        if (CheckAndConsumeWorldBossLimit(player, row.creatureId, false, false))
+            allowed.push_back(row);
+    }
+    return allowed;
+}
+
+static std::string FetchWorldBossCatalogDisplayName(uint32 creatureId)
+{
+    if (QueryResult res = WorldDatabase.Query(
+            "SELECT IFNULL(display_name,'') FROM customs.worldboss_reset_catalog WHERE creature_id = {} LIMIT 1",
+            creatureId))
+        return res->Fetch()[0].Get<std::string>();
+    return {};
+}
+
+static Price SumWorldBossPrices(std::vector<WorldBossRow> const& v)
+{
+    std::vector<LockRow> tmp;
+    tmp.reserve(v.size());
+    for (auto const& wb : v)
+    {
+        LockRow r;
+        r.price = wb.price;
+        tmp.push_back(r);
+    }
+    return SumPrices(tmp);
+}
 
 static std::string GetMapName(uint32 mapId)
 {
@@ -787,6 +1141,8 @@ static MenuState BuildMenuStateFor(Player* pl)
             }
         }
     }
+
+    ms.worldBosses = BuildWorldBossRows();
 
     return ms;
 }
@@ -1147,9 +1503,11 @@ enum ResetGossipAction : uint32
 
     ACT_CAT_DUNGEON       = 10,
     ACT_CAT_RAID          = 11,
+    ACT_CAT_WORLDBOSS     = 12,
 
     ACT_DUNGEON_RESET_ALL = 20,
     ACT_RAID_RESET_ALL    = 21,
+    ACT_WORLDBOSS_RESET_ALL = 22,
 
     ACT_DUNGEON_ITEM_BASE    = 1000,
     ACT_RAID_ITEM_BASE       = 2000,
@@ -1159,6 +1517,10 @@ enum ResetGossipAction : uint32
 
     ACT_DUNGEON_CONFIRM_ALL  = 30,
     ACT_RAID_CONFIRM_ALL     = 31,
+    ACT_WORLDBOSS_CONFIRM_ALL = 32,
+
+    ACT_WORLDBOSS_ITEM_BASE    = 5000,
+    ACT_WORLDBOSS_CONFIRM_BASE = 6000,
 
     ACT_BACK_ROOT            = 9000,
     ACT_SEPARATOR            = 9199
@@ -1166,8 +1528,11 @@ enum ResetGossipAction : uint32
 
 static void ShowRoot(Player* player, Creature* creature);
 static void ShowCategory(Player* player, Creature* creature, LockKind kind, bool refresh = false);
+static void ShowWorldBossCategory(Player* player, Creature* creature, bool refresh = false);
 static void ShowConfirmSingle(Player* player, Creature* creature, LockKind kind, uint32 index);
 static void ShowConfirmAll(Player* player, Creature* creature, LockKind kind);
+static void ShowWorldBossConfirmSingle(Player* player, Creature* creature, uint32 index);
+static void ShowWorldBossConfirmAll(Player* player, Creature* creature);
 
 // ------- ShowRoot --------
 static void ShowRoot(Player* player, Creature* creature)
@@ -1189,9 +1554,11 @@ static void ShowRoot(Player* player, Creature* creature)
 
     std::vector<std::string> cappedDungeons;
     std::vector<std::string> cappedRaids;
+    std::vector<std::string> cappedWorldBosses;
 
     bool anyDungeonAvailable = false;
     bool anyRaidAvailable    = false;
+    bool anyWorldBossAvailable = false;
 
     for (auto const& row : st.dungeons)
     {
@@ -1209,8 +1576,16 @@ static void ShowRoot(Player* player, Creature* creature)
             cappedRaids.push_back(row.name);
     }
 
+    for (auto const& row : st.worldBosses)
+    {
+        if (CheckAndConsumeWorldBossLimit(player, row.creatureId, false, false))
+            anyWorldBossAvailable = true;
+        else
+            cappedWorldBosses.push_back(row.name);
+    }
+
     bool hasAnyAvailable = anyDungeonAvailable || anyRaidAvailable;
-    bool hasAnyCapInfo   = !cappedDungeons.empty() || !cappedRaids.empty();
+    bool hasAnyCapInfo   = !cappedDungeons.empty() || !cappedRaids.empty() || !cappedWorldBosses.empty();
 
     if (!hasAnyAvailable)
     {
@@ -1250,6 +1625,21 @@ static void ShowRoot(Player* player, Creature* creature)
         AddGossipItemFor(player, GOSSIP_ICON_CHAT, dungInfo.str(), GOSSIP_SENDER_MAIN, ACT_SEPARATOR);
     }
 
+    if (!cappedWorldBosses.empty())
+    {
+        std::ostringstream wbInfo;
+        wbInfo << T("Dosáhl jsi limitu pro world bossy: ", "You reached the limit for world bosses: ");
+        bool first = true;
+        for (std::string const& name : cappedWorldBosses)
+        {
+            if (!first)
+                wbInfo << ", ";
+            wbInfo << name;
+            first = false;
+        }
+        AddGossipItemFor(player, GOSSIP_ICON_CHAT, wbInfo.str(), GOSSIP_SENDER_MAIN, ACT_SEPARATOR);
+    }
+
     bool hasInfoLines = (!hasAnyAvailable) || hasAnyCapInfo;
 
     if (hasInfoLines && hasAnyAvailable)
@@ -1259,6 +1649,9 @@ static void ShowRoot(Player* player, Creature* creature)
         AddGossipItemFor(player, GOSSIP_ICON_CHAT, T("Dungeony", "Dungeons"), GOSSIP_SENDER_MAIN, ACT_CAT_DUNGEON);
     if (anyRaidAvailable)
         AddGossipItemFor(player, GOSSIP_ICON_CHAT, T("Raidy", "Raids"),       GOSSIP_SENDER_MAIN, ACT_CAT_RAID);
+
+    if (s.worldBossEnable && anyWorldBossAvailable)
+        AddGossipItemFor(player, GOSSIP_ICON_CHAT, T("World Bossové", "World Bosses"), GOSSIP_SENDER_MAIN, ACT_CAT_WORLDBOSS);
 
     SendGossipMenuFor(player, 1, creature->GetGUID());
 }
@@ -1313,6 +1706,56 @@ static void ShowCategory(Player* player, Creature* creature, LockKind kind, bool
 
         AddGossipItemFor(player, GOSSIP_ICON_INTERACT_1, row.name.c_str(), GOSSIP_SENDER_MAIN, action);
     }
+
+    AddGossipItemFor(player, 0, Sep(), GOSSIP_SENDER_MAIN, ACT_SEPARATOR);
+    AddGossipItemFor(player, GOSSIP_ICON_TAXI, T("Zpátky", "Back"), GOSSIP_SENDER_MAIN, ACT_BACK_ROOT);
+
+    SendGossipMenuFor(player, 1, creature->GetGUID());
+}
+
+static void ShowWorldBossCategory(Player* player, Creature* creature, bool refresh /*=false*/)
+{
+    if (!s.resetEnable || !s.worldBossEnable)
+        return;
+
+    ObjectGuid::LowType key = player->GetGUID().GetCounter();
+    if (refresh || s_menu.find(key) == s_menu.end())
+        s_menu[key] = BuildMenuStateFor(player);
+
+    MenuState& st = s_menu[key];
+    st.worldBosses = BuildWorldBossRows();
+
+    if (st.worldBosses.empty())
+    {
+        ShowRoot(player, creature);
+        return;
+    }
+
+    ClearGossipMenuFor(player);
+
+    std::vector<uint32> menuToRow;
+    menuToRow.reserve(st.worldBosses.size());
+
+    for (uint32 i = 0; i < st.worldBosses.size(); ++i)
+    {
+        if (!CheckAndConsumeWorldBossLimit(player, st.worldBosses[i].creatureId, false, false))
+            continue;
+        menuToRow.push_back(i);
+    }
+
+    if (menuToRow.empty())
+    {
+        ShowRoot(player, creature);
+        return;
+    }
+
+    if (menuToRow.size() >= 2)
+        AddGossipItemFor(player, GOSSIP_ICON_INTERACT_1, T("Resetovat vše", "Reset all"),
+            GOSSIP_SENDER_MAIN, ACT_WORLDBOSS_RESET_ALL);
+
+    for (uint32 idx = 0; idx < menuToRow.size(); ++idx)
+        AddGossipItemFor(player, GOSSIP_ICON_INTERACT_1, st.worldBosses[menuToRow[idx]].name.c_str(),
+            GOSSIP_SENDER_MAIN, ACT_WORLDBOSS_ITEM_BASE + menuToRow[idx]);
 
     AddGossipItemFor(player, 0, Sep(), GOSSIP_SENDER_MAIN, ACT_SEPARATOR);
     AddGossipItemFor(player, GOSSIP_ICON_TAXI, T("Zpátky", "Back"), GOSSIP_SENDER_MAIN, ACT_BACK_ROOT);
@@ -1420,6 +1863,66 @@ static void ShowConfirmAll(Player* player, Creature* creature, LockKind kind)
     SendGossipMenuFor(player, 1, creature->GetGUID());
 }
 
+static void ShowWorldBossConfirmSingle(Player* player, Creature* creature, uint32 index)
+{
+    ObjectGuid::LowType key = player->GetGUID().GetCounter();
+    auto it = s_menu.find(key);
+    if (it == s_menu.end())
+    {
+        ShowRoot(player, creature);
+        return;
+    }
+
+    MenuState& st = it->second;
+    st.worldBosses = BuildWorldBossRows();
+    if (index >= st.worldBosses.size())
+    {
+        ShowRoot(player, creature);
+        return;
+    }
+
+    WorldBossRow const& row = st.worldBosses[index];
+
+    ClearGossipMenuFor(player);
+    AddGossipItemFor(player, GOSSIP_ICON_MONEY_BAG, PriceLine(row.price), GOSSIP_SENDER_MAIN, ACT_SEPARATOR);
+    AddGossipItemFor(player, 0, Sep(), GOSSIP_SENDER_MAIN, ACT_SEPARATOR);
+    AddGossipItemFor(player, GOSSIP_ICON_MONEY_BAG, T("Ano, potvrdit", "Yes, confirm"),
+        GOSSIP_SENDER_MAIN, ACT_WORLDBOSS_CONFIRM_BASE + index);
+    AddGossipItemFor(player, GOSSIP_ICON_TAXI, T("Zpátky", "Back"), GOSSIP_SENDER_MAIN, ACT_CAT_WORLDBOSS);
+    SendGossipMenuFor(player, 1, creature->GetGUID());
+}
+
+static void ShowWorldBossConfirmAll(Player* player, Creature* creature)
+{
+    ObjectGuid::LowType key = player->GetGUID().GetCounter();
+    auto it = s_menu.find(key);
+    if (it == s_menu.end())
+    {
+        ShowRoot(player, creature);
+        return;
+    }
+
+    MenuState& st = it->second;
+    st.worldBosses = BuildWorldBossRows();
+    std::vector<WorldBossRow> allowed = FilterWorldBossesByLimit(player, st.worldBosses);
+
+    if (allowed.size() < 2)
+    {
+        ShowWorldBossCategory(player, creature, true);
+        return;
+    }
+
+    Price allPrice = SumWorldBossPrices(allowed);
+
+    ClearGossipMenuFor(player);
+    AddGossipItemFor(player, GOSSIP_ICON_MONEY_BAG, PriceLine(allPrice), GOSSIP_SENDER_MAIN, ACT_SEPARATOR);
+    AddGossipItemFor(player, 0, Sep(), GOSSIP_SENDER_MAIN, ACT_SEPARATOR);
+    AddGossipItemFor(player, GOSSIP_ICON_MONEY_BAG, T("Ano, potvrdit", "Yes, confirm"),
+        GOSSIP_SENDER_MAIN, ACT_WORLDBOSS_CONFIRM_ALL);
+    AddGossipItemFor(player, GOSSIP_ICON_TAXI, T("Zpátky", "Back"), GOSSIP_SENDER_MAIN, ACT_CAT_WORLDBOSS);
+    SendGossipMenuFor(player, 1, creature->GetGUID());
+}
+
 // ---------------- NPC: Instance Reset ----------------
 class npc_instance_reset : public CreatureScript
 {
@@ -1461,12 +1964,20 @@ public:
                 ShowCategory(player, creature, LockKind::Raid);
                 return true;
 
+            case ACT_CAT_WORLDBOSS:
+                ShowWorldBossCategory(player, creature);
+                return true;
+
             case ACT_DUNGEON_RESET_ALL:
                 ShowConfirmAll(player, creature, LockKind::Dungeon);
                 return true;
 
             case ACT_RAID_RESET_ALL:
                 ShowConfirmAll(player, creature, LockKind::Raid);
+                return true;
+
+            case ACT_WORLDBOSS_RESET_ALL:
+                ShowWorldBossConfirmAll(player, creature);
                 return true;
 
             case ACT_SEPARATOR:
@@ -1488,6 +1999,13 @@ public:
         {
             uint32 idx = action - ACT_RAID_ITEM_BASE;
             ShowConfirmSingle(player, creature, LockKind::Raid, idx);
+            return true;
+        }
+
+        if (action >= ACT_WORLDBOSS_ITEM_BASE && action < ACT_WORLDBOSS_ITEM_BASE + 500)
+        {
+            uint32 idx = action - ACT_WORLDBOSS_ITEM_BASE;
+            ShowWorldBossConfirmSingle(player, creature, idx);
             return true;
         }
 
@@ -1563,6 +2081,44 @@ public:
             return true;
         }
 
+        if (action >= ACT_WORLDBOSS_CONFIRM_BASE && action < ACT_WORLDBOSS_CONFIRM_BASE + 500)
+        {
+            uint32 idx = action - ACT_WORLDBOSS_CONFIRM_BASE;
+
+            ObjectGuid::LowType key = player->GetGUID().GetCounter();
+            auto it = s_menu.find(key);
+            if (it == s_menu.end())
+            {
+                ShowRoot(player, creature);
+                return true;
+            }
+
+            MenuState& st = it->second;
+            st.worldBosses = BuildWorldBossRows();
+            if (idx >= st.worldBosses.size())
+            {
+                ShowRoot(player, creature);
+                return true;
+            }
+
+            {
+                std::ostringstream msg;
+                msg << T("[Reset] Obnovuji world boss ", "[Reset] Respawning world boss ")
+                    << st.worldBosses[idx].name;
+                ChatHandler(player->GetSession()).SendSysMessage(msg.str().c_str());
+            }
+
+            std::vector<WorldBossRow> list;
+            list.push_back(st.worldBosses[idx]);
+
+            if (DoWorldBossReset(player, list, st.worldBosses[idx].price))
+                CloseGossipMenuFor(player);
+            else
+                ShowWorldBossConfirmSingle(player, creature, idx);
+
+            return true;
+        }
+
         if (action == ACT_DUNGEON_CONFIRM_ALL || action == ACT_RAID_CONFIRM_ALL)
         {
             LockKind kind = (action == ACT_DUNGEON_CONFIRM_ALL) ? LockKind::Dungeon : LockKind::Raid;
@@ -1626,6 +2182,49 @@ public:
             return true;
         }
 
+        if (action == ACT_WORLDBOSS_CONFIRM_ALL)
+        {
+            ObjectGuid::LowType key = player->GetGUID().GetCounter();
+            auto it = s_menu.find(key);
+            if (it == s_menu.end())
+            {
+                ShowRoot(player, creature);
+                return true;
+            }
+
+            MenuState& st = it->second;
+            st.worldBosses = BuildWorldBossRows();
+            std::vector<WorldBossRow> allowed = FilterWorldBossesByLimit(player, st.worldBosses);
+
+            if (allowed.size() < 2)
+            {
+                ShowWorldBossCategory(player, creature, true);
+                return true;
+            }
+
+            {
+                std::ostringstream msg;
+                msg << T("[Reset] Obnovuji world bossy: ", "[Reset] Respawning world bosses: ");
+                bool first = true;
+                for (auto const& row : allowed)
+                {
+                    if (!first)
+                        msg << ", ";
+                    msg << row.name;
+                    first = false;
+                }
+                ChatHandler(player->GetSession()).SendSysMessage(msg.str().c_str());
+            }
+
+            Price allPrice = SumWorldBossPrices(allowed);
+            if (DoWorldBossReset(player, allowed, allPrice))
+                CloseGossipMenuFor(player);
+            else
+                ShowWorldBossConfirmAll(player, creature);
+
+            return true;
+        }
+
         ShowRoot(player, creature);
         return true;
     }
@@ -1672,6 +2271,7 @@ public:
 
         auto dungUsed = fetchUsed(0, heroSince);
         auto raidUsed = fetchUsed(1, raidSince);
+        auto wbUsed   = fetchUsed(2, raidSince);
 
         handler->SendSysMessage(T("Dungeony:", "Dungeons:"));
         if (dungUsed.empty())
@@ -1723,6 +2323,30 @@ public:
                     line << "  " << used << "/" << (s.raidPerWeek ? std::to_string(s.raidPerWeek) : std::string("∞"))
                          << " - " << CatalogGossipName(FetchCatalogDisplayName(mapId, diffKey), std::move(fb));
                 }
+                handler->SendSysMessage(line.str().c_str());
+            }
+        }
+
+        handler->SendSysMessage(T("World Bossové:", "World Bosses:"));
+        if (wbUsed.empty())
+        {
+            std::string line = std::string("  ") +
+                T("- Vše bez resetu (limit ", "- Everything without reset (limit ") +
+                (s.worldBossPerWeek ? std::to_string(s.worldBossPerWeek) : std::string("∞")) +
+                T(" / týden)", " / week)");
+            handler->SendSysMessage(line.c_str());
+        }
+        else
+        {
+            for (auto const& t : wbUsed)
+            {
+                uint32 creatureId; uint8 diffKey; uint32 used;
+                std::tie(creatureId, diffKey, used) = t;
+                (void)diffKey;
+                std::ostringstream line;
+                std::string fb = GetCreatureTemplateName(creatureId);
+                line << "  " << used << "/" << (s.worldBossPerWeek ? std::to_string(s.worldBossPerWeek) : std::string("∞"))
+                     << " - " << CatalogGossipName(FetchWorldBossCatalogDisplayName(creatureId), std::move(fb));
                 handler->SendSysMessage(line.str().c_str());
             }
         }

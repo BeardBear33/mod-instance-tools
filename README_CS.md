@@ -58,5 +58,17 @@ Pokud máš v databázi již jiné záznamy s těmito ID, je potřeba čísla v 
   - display_name = Vlastní zobrazený název pro gossip a .instance limit. Prázdné = výchozí název z mapy (+ suffix raidu), jinak se zobrazí vyplněný text.
   - comment = pouze informativní.
   - `Pozor: neměnit enabled pro ICC a RS pokud nemáte vypnuté sdílení lockoutu ve worldserver.conf`
+   
+- worldboss_reset_catalog
+  - id = pouze katalogové číslo
+  - Creature_id = id1 z acore_world.creature
+  - price_gold = cena ve zlatě pro reset bossa.
+  - emblem_item = libovolný item potřebný pro reset bossa.
+  - emblem_count = počet itemů potřebných pro reset bossa.
+  - enabled = povolí nebo zakáže reset daného worldbossa.
+  - display_name = Vlastní zobrazený název pro gossip
+  - comment = pouze informativní.
 
 
+## License
+This module is licensed under the [GNU General Public License v3.0 (GPL-3.0)](LICENSE).

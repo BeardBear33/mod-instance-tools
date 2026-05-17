@@ -61,7 +61,15 @@ If you already have other records in the database using these IDs, you must shif
   - display_name = Optional custom label for gossip and the .instance limit / .i limit commands. If empty (or whitespace only), the default name is used (map name from the client, plus the raid difficulty suffix). If set, that text is shown instead.
   - comment = informational only
   - `Warning: do not change enabled for ICC and RS unless you have disabled lockout sharing in worldserver.conf.`
-
+- worldboss_reset_catalog
+  - id = catalog number only
+  - creature_id = id1 from acore_world.creature (creature template entry on the spawn)
+  - price_gold = gold price for resetting the boss
+  - emblem_item = any item required to reset the boss
+  - emblem_count = number of items required to reset the boss
+  - enabled = enables or disables reset for the given world boss
+  - display_name = optional custom label for gossip and
+  - comment = informational only
 
 ## License
 This module is licensed under the [GNU General Public License v3.0 (GPL-3.0)](LICENSE).
